@@ -152,6 +152,27 @@ Fournisseurs connus → IP en dur, certificat validé sur le SAN IP :
 Serveur personnalisé → amorçage par requête UDP **directe** vers les résolveurs DHCP
 relevés avant la bascule, résultat mis en cache persistant.
 
+**Vérifié en conditions réelles :** Quad9, AdGuard et Google servent bien un
+certificat portant leurs IP en SAN (`IP Address:9.9.9.9`, `149.112.112.112`…), donc
+la connexion par IP littérale valide sans aucune résolution de nom.
+
+**Mais `1.1.1.1` s'est révélé intercepté** sur le réseau de test : il répond au ping
+en 6-12 ms et échoue pourtant la validation TLS, alors que `1.0.0.1` et l'adresse
+IPv6 de Cloudflare sont propres. Cette adresse est largement détournée par des box
+et des FAI.
+
+D'où une distinction obligatoire dans le client :
+
+| Échec | Signification | Traitement |
+|---|---|---|
+| Connexion refusée, timeout | Panne réseau | Bascule silencieuse sur l'endpoint suivant |
+| **Certificat non valide** | **Interception du DNS chiffré** | Bascule **et alerte** |
+
+Basculer en silence dans le second cas masquerait précisément ce que Tamis existe
+pour révéler. Les diagnostics par endpoint sont conservés même en cas de succès, pour
+que l'UI puisse dire « 1.1.1.1 est intercepté sur ce réseau, 1.0.0.1 utilisé à la
+place » plutôt que de laisser croire que le résolveur choisi est celui qui répond.
+
 ### 4.3 Fail-open
 
 DoH injoignable → **repli sur le DNS DHCP en clair**, avec alerte visible.
