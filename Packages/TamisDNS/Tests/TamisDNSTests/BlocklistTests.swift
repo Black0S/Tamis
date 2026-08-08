@@ -48,7 +48,9 @@ struct DomainBlocklistTests {
         #expect(list.decision(for: "ads.example.com") == .block(matched: "ads.example.com"))
         #expect(list.decision(for: "tracker.example.org") == .block(matched: "tracker.example.org"))
         #expect(list.decision(for: "cdn.example.com") == .noMatch)
-        #expect(list.stats.skipped == 2)
+        // Not parser gaps: a modifier DNS cannot evaluate, and a path-bearing rule.
+        #expect(list.stats.notApplicableToDNS == 2)
+        #expect(list.stats.skipped == 0)
     }
 
     /// A modifier that does not restrict *which requests* a rule covers is safe to
@@ -88,6 +90,100 @@ struct DomainBlocklistTests {
         #expect(list.decision(for: "cdn.example.com") == .allow(matched: "cdn.example.com"))
         // The exception is inherited downwards too.
         #expect(list.decision(for: "img.cdn.example.com") == .allow(matched: "cdn.example.com"))
+    }
+
+    /// `.example.com^` and `||example.com^` are different rules, and real lists carry
+    /// both for the same domain — which is the evidence that the leading dot means
+    /// "subdomains, not the apex".
+    @Test("the leading-dot form covers subdomains but spares the apex")
+    func subdomainOnlyForm() {
+        let list = DomainBlocklist(lines: [".bbelements.com^"])
+        #expect(list.decision(for: "www.bbelements.com") == .block(matched: ".bbelements.com"))
+        #expect(list.decision(for: "a.b.bbelements.com") == .block(matched: ".bbelements.com"))
+        #expect(list.decision(for: "bbelements.com") == .noMatch)
+        #expect(list.stats.subdomainOnlyEntries == 1)
+    }
+
+    /// In a URL, `://` sits immediately before the host, so `://example.com^` cannot
+    /// match `https://sub.example.com/` — there are characters in between. The rule
+    /// therefore means the exact host and nothing under it.
+    @Test("the ://host^ form blocks the exact host, not its subdomains")
+    func exactHostForm() {
+        let list = DomainBlocklist(lines: ["://mine.torrent.pw^"])
+        #expect(list.decision(for: "mine.torrent.pw") == .block(matched: "://mine.torrent.pw"))
+        #expect(list.decision(for: "www.mine.torrent.pw") == .noMatch)
+        #expect(list.stats.exactOnlyEntries == 1)
+    }
+
+    @Test("the three block scopes do not bleed into one another")
+    func scopesAreDistinct() {
+        let list = DomainBlocklist(
+            blocking: ["all.example"],
+            blockingSubdomainsOf: ["sub.example"],
+            blockingExactly: ["exact.example"]
+        )
+        // ||all.example^ — apex and everything under it.
+        #expect(list.decision(for: "all.example") != .noMatch)
+        #expect(list.decision(for: "x.all.example") != .noMatch)
+        // .sub.example^ — subdomains only.
+        #expect(list.decision(for: "sub.example") == .noMatch)
+        #expect(list.decision(for: "x.sub.example") != .noMatch)
+        // ://exact.example^ — that host alone.
+        #expect(list.decision(for: "exact.example") != .noMatch)
+        #expect(list.decision(for: "x.exact.example") == .noMatch)
+    }
+
+    /// A `*` inside a hostname defeats a set lookup, but DNS carries the full queried
+    /// name, so these rules are expressible — anchored on their longest wildcard-free
+    /// suffix so they are only tested for queries that could plausibly match.
+    @Test("wildcard host patterns are matched against the queried name")
+    func wildcardHosts() {
+        let list = DomainBlocklist(lines: ["-adx-*.rayjump.com^", "|c.blue.*.com^|"])
+        #expect(list.decision(for: "-adx-eu.rayjump.com") == .block(matched: "-adx-*.rayjump.com"))
+        #expect(list.decision(for: "-adx-.rayjump.com") == .block(matched: "-adx-*.rayjump.com"))
+        #expect(list.decision(for: "cdn.rayjump.com") == .noMatch)
+        #expect(list.decision(for: "c.blue.tracker.com") == .block(matched: "c.blue.*.com"))
+        #expect(list.stats.wildcardEntries == 2)
+    }
+
+    @Test("glob matching does not backtrack itself to death", arguments: [
+        ("a*b", "ab", true),
+        ("a*b", "axxxb", true),
+        ("a*b", "ba", false),
+        ("*", "anything", true),
+        ("a*a*a*a*b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false),
+    ])
+    func globSemantics(pattern: String, text: String, expected: Bool) {
+        #expect(DomainBlocklist.globMatches(pattern, text) == expected)
+    }
+
+    @Test("$badfilter cancels the identical rule, wherever it was declared")
+    func badFilter() {
+        let list = DomainBlocklist(lines: [
+            "||tracker.example^",
+            "0.0.0.0 ads.example",
+            "||tracker.example^$badfilter",
+            "ads.example$badfilter",
+        ])
+        #expect(list.decision(for: "tracker.example") == .noMatch)
+        #expect(list.decision(for: "ads.example") == .noMatch)
+        #expect(list.stats.badFilterEntries == 2)
+        #expect(list.stats.removedByBadFilter == 2)
+    }
+
+    /// Separated from `skipped` on purpose: these are not parser gaps. A regex over
+    /// URLs, or a rule narrowed by information DNS does not carry, cannot be honoured
+    /// by any DNS resolver.
+    @Test("rules that DNS structurally cannot express are counted apart")
+    func notApplicableAreCountedApart() {
+        let list = DomainBlocklist(lines: [
+            #"/^139\.45\.197\.2(4[0-9]|5[0-4]):/"#,
+            "||cdn.example.com^$third-party",
+            "0.0.0.0 real-ad.example",
+        ])
+        #expect(list.stats.notApplicableToDNS == 2)
+        #expect(list.stats.skipped == 0)
+        #expect(list.stats.blockEntries == 1)
     }
 
     @Test("inline comments are stripped")

@@ -34,6 +34,11 @@ print("lines                  \(s.lines)")
 print("comments               \(s.comments)")
 print("block entries          \(s.blockEntries)")
 print("allow entries          \(s.allowEntries)")
+print("subdomain-only         \(s.subdomainOnlyEntries)")
+print("exact-host only        \(s.exactOnlyEntries)")
+print("wildcard patterns      \(s.wildcardEntries)")
+print("badfilter              \(s.badFilterEntries) → removed \(s.removedByBadFilter)")
+print("not applicable to DNS  \(s.notApplicableToDNS)")
 print("skipped                \(s.skipped)")
 
 let samples = [
@@ -74,3 +79,9 @@ let ns = Double(DispatchTime.now().uptimeNanoseconds - start) / Double(iteration
 
 print("")
 print(String(format: "decision  %.2f µs each  →  %.0f queries/second", ns / 1000, 1_000_000_000 / ns))
+
+if !s.skippedSamples.isEmpty {
+    print("")
+    print("skipped samples:")
+    for line in s.skippedSamples.prefix(20) { print("  \(line)") }
+}
