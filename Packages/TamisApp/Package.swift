@@ -11,11 +11,12 @@ let package = Package(
         .package(path: "../TamisLists"),
         .package(path: "../TamisApps"),
         .package(path: "../TamisHistory"),
+        .package(path: "../TamisSystem"),
     ],
     targets: [
         .executableTarget(
             name: "TamisApp",
-            dependencies: ["TamisFilterEngine", "TamisDNS", "TamisUserScripts", "TamisLists", "TamisApps", "TamisHistory"],
+            dependencies: ["TamisFilterEngine", "TamisDNS", "TamisUserScripts", "TamisLists", "TamisApps", "TamisHistory", "TamisSystem"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         )
     ]

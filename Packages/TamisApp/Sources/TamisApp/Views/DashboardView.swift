@@ -1,4 +1,5 @@
 import SwiftUI
+import TamisSystem
 
 struct DashboardView: View {
     @Environment(AppState.self) private var state
@@ -9,11 +10,17 @@ struct DashboardView: View {
     /// Set by the window, so the empty state can send the user to the Filters screen
     /// instead of describing where it is.
     var onChooseLists: () -> Void = {}
+    /// Opens the first-run flow. Offered from here rather than shown automatically: a
+    /// sheet nobody can dismiss is a sheet people resent, and the window is useful
+    /// before anything is installed.
+    var onConfigure: () -> Void = {}
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
+
+                if !TamisSystem.Installation.isInstalled { notInstalledNotice }
 
                 if lists.enabledCount == 0 {
                     NoListsNotice(onChooseLists: onChooseLists)
@@ -63,6 +70,27 @@ struct DashboardView: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .disabled(state.protection == .notConfigured)
+        }
+    }
+
+    /// The honest headline while nothing is installed: the app manages filtering it
+    /// does not yet apply, and that distinction is invisible from the inside.
+    private var notInstalledNotice: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Tamis n'est pas installé", systemImage: "arrow.down.circle")
+                    .font(.headline)
+                Text("Aucun trafic ne passe par Tamis pour l'instant : le proxy "
+                     + "système n'est pas configuré et le résolveur n'a pas le port "
+                     + "DNS. Vous pouvez explorer l'application telle quelle.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Button("Configurer Tamis…", action: onConfigure)
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
         }
     }
 

@@ -168,7 +168,8 @@ reconfigured, so the system does not use it yet. The Scripts screen manages
 
 The History screen shows what the resolver decided, and the DNS resolver writes to it.
 
-`TAMIS_STORE`, `TAMIS_SCRIPTS` and `TAMIS_HISTORY` point those directories elsewhere.
+`TAMIS_STORE`, `TAMIS_SCRIPTS` and `TAMIS_HISTORY` point those directories elsewhere;
+`TAMIS_ONBOARDING=1` opens the first-run flow at launch.
 
 ## Build and test
 
@@ -270,7 +271,8 @@ root:
 | launchd jobs and the PAC file the plan installs | done |
 | Installer and uninstaller — dry run by default | done |
 | PAC helper — outlives the app, fails open | done |
-| Applying the plan, onboarding, uninstall, app updates | not started |
+| Onboarding — nine screens, one password, nothing left behind | done |
+| Running a real install, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |

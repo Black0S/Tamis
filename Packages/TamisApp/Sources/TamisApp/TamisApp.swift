@@ -10,6 +10,7 @@ struct TamisApp: App {
     @State private var applications = ApplicationsModel()
     @State private var history = HistoryModel.makeDefault()
     @State private var alerts = AlertsModel()
+    @State private var onboarding = OnboardingModel()
 
     init() {
         let lists = FilterListsModel.makeDefault()
@@ -37,6 +38,7 @@ struct TamisApp: App {
                 .environment(applications)
                 .environment(history)
                 .environment(alerts)
+                .environment(onboarding)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)

@@ -48,6 +48,8 @@ public enum Preflight {
 
     public struct Report: Sendable, Equatable {
         public var findings: [Finding]
+
+        public init(findings: [Finding] = []) { self.findings = findings }
         public var canProceed: Bool { !findings.contains { $0.severity == .blocking } }
         public var needsAttention: Bool { findings.contains { $0.severity != .note } }
     }

@@ -15,6 +15,10 @@ struct MainWindow: View {
     @Environment(ScriptsModel.self) private var scripts
     @Environment(HistoryModel.self) private var history
     @State private var selection: Section? = .dashboard
+    /// `TAMIS_ONBOARDING=1` opens the first-run flow at launch. A seam for driving it
+    /// without hunting for a button, like `TAMIS_STORE` for the list directory.
+    @State private var isOnboarding =
+        ProcessInfo.processInfo.environment["TAMIS_ONBOARDING"] == "1"
 
     enum Section: String, CaseIterable, Identifiable, Hashable {
         case dashboard, history, filters, dns, applications, scripts, alerts, settings
@@ -69,7 +73,8 @@ struct MainWindow: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 240)
         } detail: {
             switch selection {
-            case .dashboard, .none: DashboardView(onChooseLists: { selection = .filters })
+            case .dashboard, .none: DashboardView(onChooseLists: { selection = .filters },
+                                                  onConfigure: { isOnboarding = true })
             case .filters:          FiltersView()
             case .dns:              DNSView()
             case .scripts:          ScriptsView()
@@ -79,6 +84,11 @@ struct MainWindow: View {
             case .settings:         SettingsView()
             case .some(let section): PlaceholderView(section: section)
             }
+        }
+        // Offered rather than forced: the window works before installation, and a
+        // first-run sheet nobody can dismiss is a first-run sheet people resent.
+        .sheet(isPresented: $isOnboarding) {
+            OnboardingView(onFinish: { isOnboarding = false })
         }
         // Before anything is shown, so no screen opens on a state it invented.
         .task {
