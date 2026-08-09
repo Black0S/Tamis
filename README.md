@@ -10,9 +10,10 @@ hides what a blocked advert would have left behind.
 It depends on **no Apple developer account**: no entitlement, no Developer ID, no
 approval. Anyone who clones this repository gets a working build.
 
-> **Status: not yet an application.** The engine, the DNS layer and the proxy work and
-> are tested; the SwiftUI app, the onboarding and the privileged daemon are not written.
-> Two command-line tools below are runnable today. See [Where this stands](#where-this-stands).
+> **Status: not yet a working install.** The engines, the DNS layer, the proxy and the
+> list management all work and are tested, and the app builds and runs — but nothing
+> installs itself yet, so no traffic passes through it. Everything below is runnable
+> today. See [Where this stands](#where-this-stands).
 
 ---
 
@@ -105,9 +106,9 @@ everything passes the first.
 Scripts/bundle-app.sh && open build/Tamis.app
 ```
 
-Builds `Tamis.app` and signs it ad hoc — no certificate, no account. It is the interface
-only for now: the window and the menu bar panel are real, nothing is wired to the engine
-behind them yet.
+Builds `Tamis.app` and signs it ad hoc — no certificate, no account. The Filters screen
+is live: it browses all 165 lists, downloads what you enable, and stores it under
+`~/Library/Application Support/Tamis`. Nothing else is wired to the engines yet.
 
 ## Build and test
 
@@ -174,7 +175,7 @@ root:
 | Blocklist catalogue — 165 lists, embedded, nothing downloaded | done |
 | List downloading, update guardrails, diffs, rollback | done |
 | Subscriptions, refresh, compiling into both engines | done |
-| Wiring the lists into the interface | not started |
+| Filters screen — browse, enable, refresh, add by URL | done |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |

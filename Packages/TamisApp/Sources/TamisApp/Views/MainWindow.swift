@@ -8,6 +8,7 @@ import SwiftUI
 /// whatever the user chose in System Settings.
 struct MainWindow: View {
     @Environment(AppState.self) private var state
+    @Environment(FilterListsModel.self) private var lists
     @State private var selection: Section? = .dashboard
 
     enum Section: String, CaseIterable, Identifiable, Hashable {
@@ -63,11 +64,13 @@ struct MainWindow: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 240)
         } detail: {
             switch selection {
-            case .dashboard: DashboardView()
-            case .none:      DashboardView()
-            default:         PlaceholderView(section: selection ?? .dashboard)
+            case .dashboard, .none: DashboardView(onChooseLists: { selection = .filters })
+            case .filters:          FiltersView()
+            case .some(let section): PlaceholderView(section: section)
             }
         }
+        // Before anything is shown, so no screen opens on a state it invented.
+        .task { await lists.reload() }
     }
 
     @ViewBuilder
@@ -100,5 +103,6 @@ struct PlaceholderView: View {
 #Preview("Fenêtre principale") {
     MainWindow()
         .environment(AppState.previewRunning())
+        .environment(FilterListsModel.makeDefault())
         .frame(width: 1000, height: 680)
 }

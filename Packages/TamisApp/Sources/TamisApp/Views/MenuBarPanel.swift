@@ -6,6 +6,7 @@ import SwiftUI
 /// interface is a menu bar panel nobody reads.
 struct MenuBarPanel: View {
     @Environment(AppState.self) private var state
+    @Environment(FilterListsModel.self) private var lists
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -13,7 +14,7 @@ struct MenuBarPanel: View {
             statusRow
             Divider().padding(.vertical, 10)
 
-            if state.hasAnyList {
+            if lists.enabledCount > 0 {
                 todayRow
             } else {
                 noListsRow
@@ -121,9 +122,13 @@ private struct MenuRowLabelStyle: LabelStyle {
 }
 
 #Preview("En fonctionnement") {
-    MenuBarPanel().environment(AppState.previewRunning())
+    MenuBarPanel()
+        .environment(AppState.previewRunning())
+        .environment(FilterListsModel.makeDefault())
 }
 
 #Preview("Premier lancement") {
-    MenuBarPanel().environment(AppState())
+    MenuBarPanel()
+        .environment(AppState())
+        .environment(FilterListsModel.makeDefault())
 }

@@ -22,9 +22,6 @@ final class AppState {
 
     var protection: Protection = .notConfigured
 
-    /// Filter lists the user enabled. Empty at first launch, by design: Tamis
-    /// downloads nothing until someone chooses.
-    var enabledLists: [FilterListSummary] = []
     var blockedToday = 0
     var bytesSaved = 0
     /// Requests Tamis could not see, which is what would justify the layer it does not
@@ -35,16 +32,7 @@ final class AppState {
     var alerts: [Alert] = []
     var recent: [Decision] = []
 
-    var hasAnyList: Bool { !enabledLists.isEmpty }
-
     // MARK: Types
-
-    struct FilterListSummary: Identifiable, Sendable, Equatable {
-        let id: String
-        let name: String
-        let ruleCount: Int
-        let updatedAt: Date?
-    }
 
     /// Alerts split in two, and the distinction is behavioural rather than cosmetic.
     ///
@@ -84,10 +72,6 @@ extension AppState {
     static func previewRunning() -> AppState {
         let state = AppState()
         state.protection = .active
-        state.enabledLists = [
-            .init(id: "easylist", name: "EasyList", ruleCount: 87_329, updatedAt: .now),
-            .init(id: "easyprivacy", name: "EasyPrivacy", ruleCount: 56_459, updatedAt: .now),
-        ]
         state.blockedToday = 12_847
         state.bytesSaved = 3_200_000_000
         state.unfilteredFlows = 4
