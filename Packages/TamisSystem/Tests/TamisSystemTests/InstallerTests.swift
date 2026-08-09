@@ -36,7 +36,6 @@ struct InstallerTests {
         // Getting those the wrong way round produces a command that fails at install
         // time and nowhere earlier.
         for expected in [
-            "launchctl bootstrap system '/Library/LaunchDaemons/\(Installation.daemonLabel).plist'",
             "security add-trusted-cert",
             "launchctl bootstrap system '/Library/LaunchDaemons/\(Installation.resolverLabel).plist'",
             "networksetup -setautoproxyurl",
@@ -59,7 +58,7 @@ struct InstallerTests {
     @Test("Property lists are staged, never written from the shell")
     func plistsAreStaged() {
         let script = installer().privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
-        #expect(script.contains("staging/\(Installation.daemonLabel).plist"))
+        #expect(script.contains("staging/\(Installation.resolverLabel).plist"))
         #expect(!script.contains("<?xml"), "un plist est construit dans le shell")
         #expect(!script.contains("cat >"), "un fichier est écrit depuis le shell")
     }
@@ -141,8 +140,6 @@ struct PrivilegedLocationTests {
     @Test("No launchd job points into the application bundle")
     func jobsPointOutsideTheBundle() throws {
         for job in [
-            LaunchdJob.privilegedDaemon(
-                executable: Installation.privilegedDirectory.appending(path: "tamisd")),
             LaunchdJob.resolver(
                 executable: Installation.privilegedDirectory.appending(path: "tamis-dnsd")),
         ] {
@@ -159,7 +156,7 @@ struct PrivilegedLocationTests {
     func scriptCopiesBinaries() {
         let script = installer.privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
         let directory = Installation.privilegedDirectory.path(percentEncoded: false)
-        #expect(script.contains("cp '/Applications/Tamis.app/Contents/MacOS/tamisd' '\(directory)/tamisd'"))
+        #expect(script.contains("cp '/Applications/Tamis.app/Contents/MacOS/tamis-dnsd' '\(directory)/tamis-dnsd'"))
         #expect(script.contains("chown -R root:wheel '\(directory)'"))
         #expect(script.contains("chmod 755"))
     }
@@ -168,9 +165,11 @@ struct PrivilegedLocationTests {
     /// them — which means the uninstall has to, or they stay for ever.
     @Test("The uninstall removes the copies it made")
     func uninstallRemovesCopies() {
-        let daemon = try? #require(Installation.plan().first { $0.id == "daemon" })
-        #expect(daemon?.undoCommand.contains(Installation.privilegedDirectory.path(percentEncoded: false)) == true)
-        #expect(daemon?.paths.contains(Installation.privilegedDirectory) == true)
+        // Carried by the resolver step now that the daemon step is gone. Nothing else
+        // would remove them, and they are outside the bundle.
+        let resolver = try? #require(Installation.plan().first { $0.id == "resolver" })
+        #expect(resolver?.undoCommand.contains(Installation.privilegedDirectory.path(percentEncoded: false)) == true)
+        #expect(resolver?.paths.contains(Installation.privilegedDirectory) == true)
     }
 
     /// Pointing DNS at Tamis is what makes the resolver cover the whole machine, and

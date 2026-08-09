@@ -235,8 +235,10 @@ root:
   no network, and the banking and password-manager lists cannot be disabled.
 - **Intercept Tor Browser or Mullvad Browser.** Locked out, because filtering them
   would destroy the reason they exist.
-- **Let its own authority's key leave the privileged daemon.** A complete compromise of
-  the proxy still cannot exfiltrate it.
+- **Claim a protection it does not yet have.** The design puts the authority's private
+  key in a privileged daemon so a compromise of the proxy cannot reach it. That daemon
+  is not written: today the key sits in the user's account, readable only by them. The
+  onboarding says so, in the same place it lists the other limits.
 
 ## Where this stands
 
@@ -274,6 +276,7 @@ root:
 | PAC helper — outlives the app, fails open | done |
 | Onboarding — nine screens, one password, nothing left behind | done |
 | Update check — reports, never installs | done |
+| Privileged daemon holding the authority's key | not started |
 | Running a real install | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |

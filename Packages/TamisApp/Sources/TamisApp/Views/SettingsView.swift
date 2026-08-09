@@ -367,6 +367,7 @@ struct AboutSettings: View {
                                + "un rapport de plantage.")
                         Bullet("Ne déchiffre ni les banques ni les gestionnaires de mots "
                                + "de passe. Les listes sont embarquées et verrouillées.")
+                        Bullet(AuthorityStore.keyProtectionCaveat)
                         Bullet("N'intercepte ni Tor Browser ni Mullvad Browser.")
                         Bullet("N'affiche aucun chiffre qu'il ne peut pas mesurer — il "
                                + "n'y a pas de « données économisées » : une requête "

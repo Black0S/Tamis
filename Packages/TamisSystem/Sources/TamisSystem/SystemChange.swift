@@ -54,6 +54,10 @@ public struct SystemChange: Sendable, Identifiable {
 /// Everything installing would change, and everything uninstalling would undo.
 public enum Installation {
 
+    /// Reserved. The privileged daemon that should hold the authority's key is not
+    /// written, so nothing installs it — an install plan that copies a binary the build
+    /// does not produce fails at the moment the user has just typed their password.
+    /// See ``AuthorityStore`` for what is done instead, and what that costs.
     public static let daemonLabel = "io.github.black0s.tamisd"
     public static let resolverLabel = "io.github.black0s.tamis-dnsd"
     public static let helperLabel = "io.github.black0s.tamis-pac"
@@ -95,28 +99,6 @@ public enum Installation {
     public static func plan(proxyPort: UInt16 = 7654, pacPort: UInt16 = 7655) -> [SystemChange] {
         [
             SystemChange(
-                id: "daemon",
-                title: "Service privilégié",
-                effect: "Installe un service qui détient la clé de l'autorité de "
-                      + "certification et applique les réglages système. Il n'analyse "
-                      + "aucun contenu réseau : c'est ce qui permet au reste de Tamis "
-                      + "de ne jamais tourner en root.",
-                undoCommand: "sudo launchctl bootout system/\(daemonLabel); "
-                           + "sudo rm /Library/LaunchDaemons/\(daemonLabel).plist; "
-                           + "sudo rm -rf '\(privilegedDirectory.path(percentEncoded: false))'",
-                scope: .administrator,
-                paths: [
-                    URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist"),
-                    privilegedDirectory,
-                ],
-                detect: {
-                    FileManager.default.fileExists(
-                        atPath: "/Library/LaunchDaemons/\(daemonLabel).plist"
-                    )
-                }
-            ),
-
-            SystemChange(
                 id: "authority",
                 title: "Autorité de certification",
                 effect: "Ajoute une autorité racine au trousseau du système. C'est ce "
@@ -135,10 +117,16 @@ public enum Installation {
                 effect: "Fait écouter Tamis sur le port DNS. launchd ouvre le port et "
                       + "le transmet déjà ouvert, donc le résolveur lui-même ne tourne "
                       + "jamais en root.",
+                // Also removes the copied binaries: they live outside the bundle, so
+                // deleting the application cannot take them, and nothing else would.
                 undoCommand: "sudo launchctl bootout system/\(resolverLabel); "
-                           + "sudo rm /Library/LaunchDaemons/\(resolverLabel).plist",
+                           + "sudo rm /Library/LaunchDaemons/\(resolverLabel).plist; "
+                           + "sudo rm -rf '\(privilegedDirectory.path(percentEncoded: false))'",
                 scope: .administrator,
-                paths: [URL(fileURLWithPath: "/Library/LaunchDaemons/\(resolverLabel).plist")],
+                paths: [
+                    URL(fileURLWithPath: "/Library/LaunchDaemons/\(resolverLabel).plist"),
+                    privilegedDirectory,
+                ],
                 detect: {
                     FileManager.default.fileExists(
                         atPath: "/Library/LaunchDaemons/\(resolverLabel).plist"

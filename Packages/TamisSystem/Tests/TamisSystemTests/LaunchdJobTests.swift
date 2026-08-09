@@ -70,7 +70,6 @@ struct LaunchdJobTests {
     func planMatchesJobs() {
         let executable = URL(fileURLWithPath: "/Applications/Tamis.app/Contents/MacOS/x")
         let created = Set([
-            LaunchdJob.privilegedDaemon(executable: executable).plistURL,
             LaunchdJob.resolver(executable: executable).plistURL,
             LaunchdJob.pacHelper(executable: executable).plistURL,
         ].map { $0.path(percentEncoded: false) })

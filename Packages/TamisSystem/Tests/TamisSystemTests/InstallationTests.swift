@@ -87,3 +87,71 @@ struct InstallationTests {
         #expect(Installation.isInstalled == !Installation.applied().isEmpty)
     }
 }
+
+/// The install plan must only reference binaries the build actually produces.
+@Suite("The plan matches the build")
+struct PlanMatchesBuildTests {
+
+    /// Found by cloning the repository fresh and building it: the plan copied a
+    /// `tamisd` no package produces, so the install would have failed at the moment
+    /// the user had just typed their password.
+    @Test("The privileged script names no binary the bundle does not carry")
+    func onlyRealBinaries() {
+        let script = Installer(applicationURL: URL(fileURLWithPath: "/Applications/Tamis.app"))
+            .privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        // The three the bundle script copies. Anything else would be a path that does
+        // not exist on the machine the install runs on.
+        let shipped = ["Tamis", "tamis-dnsd", "tamis-pac"]
+        for name in ["tamisd", "tamis-proxy", "tamis-lists"] where !shipped.contains(name) {
+            #expect(!script.contains("MacOS/\(name)"), "le script copie \(name), absent du bundle")
+        }
+    }
+
+    @Test("Nothing in the plan installs the unwritten daemon")
+    func noDaemonStep() {
+        #expect(Installation.plan().allSatisfy { $0.id != "daemon" })
+    }
+}
+
+@Suite("Authority store")
+struct AuthorityStoreTests {
+
+    /// The key is what matters; the certificate is public by nature. Locking both down
+    /// would be theatre that hides which of the two the security rests on.
+    @Test("The key is readable only by its owner, the certificate is not restricted")
+    func permissions() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "tamis-ca-\(UUID().uuidString)")
+        let store = AuthorityStore(directory: directory)
+        defer { store.remove() }
+
+        try store.store(certificatePEM: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
+                        privateKeyDER: [1, 2, 3])
+        #expect(store.exists)
+        #expect(try store.privateKeyDER() == [1, 2, 3])
+
+        let mode = try FileManager.default.attributesOfItem(
+            atPath: store.privateKeyURL.path(percentEncoded: false)
+        )[.posixPermissions] as? NSNumber
+        #expect(mode?.int16Value == 0o600)
+    }
+
+    @Test("Removing leaves nothing")
+    func removal() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "tamis-ca-\(UUID().uuidString)")
+        let store = AuthorityStore(directory: directory)
+        try store.store(certificatePEM: "x", privateKeyDER: [1])
+        store.remove()
+        #expect(!store.exists)
+        #expect(throws: AuthorityStore.Failure.missing) { _ = try store.privateKeyDER() }
+    }
+
+    /// The gap between what runs and what the design calls for is quoted from one
+    /// place, so the onboarding and the settings screen cannot drift apart on it.
+    @Test("The caveat is stated, and says what is actually true")
+    func caveatIsHonest() {
+        #expect(AuthorityStore.keyProtectionCaveat.contains("n'est pas encore écrit"))
+        #expect(AuthorityStore.keyProtectionCaveat.contains("compte utilisateur"))
+    }
+}

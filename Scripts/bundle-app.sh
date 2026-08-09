@@ -25,6 +25,18 @@ swift build --package-path "$PACKAGE" -c "$CONFIGURATION"
 BINARY="$(swift build --package-path "$PACKAGE" -c "$CONFIGURATION" --show-bin-path)/TamisApp"
 [ -x "$BINARY" ] || { echo "error: no executable at $BINARY" >&2; exit 1; }
 
+# The helpers the installer copies out of the bundle. Building the app alone produces
+# a bundle that installs a service pointing at a file that is not there — which fails
+# at install time and nowhere earlier.
+echo "==> Building helpers"
+swift build --package-path "$ROOT/Packages/TamisDNS" -c "$CONFIGURATION" --product tamis-dnsd
+swift build --package-path "$ROOT/Packages/TamisSystem" -c "$CONFIGURATION" --product tamis-pac
+DNSD="$(swift build --package-path "$ROOT/Packages/TamisDNS" -c "$CONFIGURATION" --show-bin-path)/tamis-dnsd"
+PAC="$(swift build --package-path "$ROOT/Packages/TamisSystem" -c "$CONFIGURATION" --show-bin-path)/tamis-pac"
+for helper in "$DNSD" "$PAC"; do
+    [ -x "$helper" ] || { echo "error: no executable at $helper" >&2; exit 1; }
+done
+
 APP="$ROOT/build/Tamis.app"
 echo "==> Assembling $APP"
 rm -rf "$APP"
@@ -33,6 +45,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Named Tamis, not TamisApp: this is what shows in the Dock, in Force Quit and in the
 # process list.
 cp "$BINARY" "$APP/Contents/MacOS/Tamis"
+cp "$DNSD" "$APP/Contents/MacOS/tamis-dnsd"
+cp "$PAC"  "$APP/Contents/MacOS/tamis-pac"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
