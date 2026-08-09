@@ -235,7 +235,7 @@ struct ProxyEndToEndTests {
     }
 }
 
-private actor EventRecorder {
+actor EventRecorder {
     var events: [EventSink.Event] = []
     func record(_ event: EventSink.Event) { events.append(event) }
 }

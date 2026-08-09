@@ -24,14 +24,26 @@ public struct LeafIssuer: Sendable {
     private let authority: CertificateAuthority
     /// Shared across every leaf — see the note above.
     private let leafKey: Certificate.PrivateKey
+    private let rawKey: P256.Signing.PrivateKey
 
     public init(authority: CertificateAuthority) {
+        let key = P256.Signing.PrivateKey()
         self.authority = authority
-        self.leafKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
+        self.rawKey = key
+        self.leafKey = Certificate.PrivateKey(key)
     }
 
     public var publicKey: Certificate.PublicKey { leafKey.publicKey }
     public var privateKey: Certificate.PrivateKey { leafKey }
+
+    /// PKCS#8 DER, the form TLS libraries expect when handed a key directly.
+    ///
+    /// Exposed because the proxy has to give this key to NIOSSL. That is safe in a way
+    /// the authority's key is not: a leaf key authenticates nothing without the
+    /// authority's signature over it.
+    public var privateKeyDER: [UInt8] {
+        Array(rawKey.derRepresentation)
+    }
 
     /// Issues a certificate for one connection target.
     ///

@@ -3,6 +3,7 @@ import NIOCore
 import NIOPosix
 import NIOConcurrencyHelpers
 import NIOHTTP1
+import NIOSSL
 
 public enum ProxyError: Error, Sendable, Equatable {
     case malformedConnectTarget(String)
@@ -21,11 +22,20 @@ public final class ProxyServer: Sendable {
         public var host: String
         public var port: Int
         public var policy: InterceptionPolicy
+        /// Absent means Tamis can only tunnel — which is a valid state, not a broken
+        /// one: it is what a paused or not-yet-onboarded installation looks like.
+        public var interception: TLSInterception.Materials?
 
-        public init(host: String = "127.0.0.1", port: Int = 0, policy: InterceptionPolicy = .init()) {
+        public init(
+            host: String = "127.0.0.1",
+            port: Int = 0,
+            policy: InterceptionPolicy = .init(),
+            interception: TLSInterception.Materials? = nil
+        ) {
             self.host = host
             self.port = port
             self.policy = policy
+            self.interception = interception
         }
     }
 
@@ -34,6 +44,10 @@ public final class ProxyServer: Sendable {
     private let events: EventSink
     private let ownsGroup: Bool
     private let channelBox = NIOLockedValueBox<Channel?>(nil)
+    /// Targets that refused our certificate. Consulted on the next connection, which
+    /// is how a pinned client's automatic retry gets tunnelled instead of failing
+    /// again.
+    private let learnedBox = NIOLockedValueBox<Set<String>>([])
 
     public init(
         configuration: Configuration,
@@ -46,6 +60,11 @@ public final class ProxyServer: Sendable {
         self.events = events
     }
 
+    /// Hosts learned to be un-interceptable during this run.
+    public var learnedPassthrough: Set<String> {
+        learnedBox.withLockedValue { $0 }
+    }
+
     /// The port actually listened on, which matters when 0 asked the kernel to choose.
     public var boundPort: Int? {
         channelBox.withLockedValue { $0?.localAddress?.port }
@@ -55,6 +74,10 @@ public final class ProxyServer: Sendable {
         let configuration = self.configuration
         let events = self.events
         let group = self.group
+        let learned = self.learnedBox
+        let learn: @Sendable (String) -> Void = { (host: String) -> Void in
+            learned.withLockedValue { set in _ = set.insert(host) }
+        }
 
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(.backlog, value: 256)
@@ -67,7 +90,10 @@ public final class ProxyServer: Sendable {
                 channel.pipeline.addHandlers([
                     HTTPResponseEncoder(),
                     ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
-                    ConnectHandler(policy: configuration.policy, group: group, events: events),
+                    ConnectHandler(
+                        policy: configuration.policy, group: group, events: events,
+                        interception: configuration.interception, learn: learn
+                    ),
                 ])
             }
 
@@ -94,7 +120,15 @@ public final class EventSink: Sendable {
 
     public enum Event: Sendable {
         case tunnelled(host: String, reason: InterceptionPolicy.TunnelReason)
-        case interceptRequested(host: String)
+        case intercepted(host: String)
+        /// The client refused our certificate: it pins. Remembered so the retry is
+        /// tunnelled.
+        case pinningDetected(host: String)
+        /// The origin asked for a certificate only the user's keychain holds.
+        case clientCertificateRequired(host: String)
+        /// The origin's own certificate did not validate. A security finding, never
+        /// answered by falling back to a tunnel.
+        case upstreamCertificateRejected(host: String, reason: String, isNameMismatch: Bool)
         case failed(host: String, message: String)
     }
 
@@ -123,12 +157,25 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let policy: InterceptionPolicy
     private let group: EventLoopGroup
     private let events: EventSink
+    private let interception: TLSInterception.Materials?
+    private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
+    private var mode: Mode = .tunnel
 
-    init(policy: InterceptionPolicy, group: EventLoopGroup, events: EventSink) {
+    enum Mode { case tunnel, intercept }
+
+    init(
+        policy: InterceptionPolicy,
+        group: EventLoopGroup,
+        events: EventSink,
+        interception: TLSInterception.Materials?,
+        learn: @escaping @Sendable (String) -> Void
+    ) {
         self.policy = policy
         self.group = group
         self.events = events
+        self.interception = interception
+        self.learn = learn
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -158,12 +205,19 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
             switch policy.decision(forHost: target.host) {
             case .tunnel(let reason):
                 events.emit(.tunnelled(host: target.host, reason: reason))
+                mode = .tunnel
             case .intercept:
-                // Interception is not wired yet; tunnelling is the safe behaviour
-                // while it is not, since it degrades to "Tamis is transparent".
-                events.emit(.interceptRequested(host: target.host))
+                // No materials means onboarding has not run. Tunnelling then is the
+                // right answer, not a degraded one: Tamis is simply transparent.
+                mode = interception == nil ? .tunnel : .intercept
+                if mode == .tunnel {
+                    events.emit(.tunnelled(host: target.host, reason: .filteringDisabled))
+                }
             }
-            openTunnel(context: context, to: target)
+            switch mode {
+            case .tunnel:    openTunnel(context: context, to: target)
+            case .intercept: beginInterception(context: context, to: target)
+            }
         }
     }
 
@@ -223,6 +277,56 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                     events.emit(.failed(host: target.host, message: "\(error)"))
                     self.respond(context: context, status: .badGateway)
                 }
+            }
+    }
+
+    /// Answers the CONNECT, then turns the client side into a TLS server.
+    ///
+    /// The 200 goes out before the TLS handlers are installed, because the client will
+    /// not start its handshake until it has seen one.
+    private func beginInterception(context: ChannelHandlerContext, to target: (host: String, port: Int)) {
+        guard let materials = interception else {
+            openTunnel(context: context, to: target)
+            return
+        }
+        let client = context.channel
+        let events = self.events
+        let group = self.group
+        let learn = self.learn
+
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Length", value: "0")
+        let head = HTTPResponseHead(version: .http1_1, status: .ok, headers: headers)
+        context.write(wrapOutboundOut(.head(head)), promise: nil)
+        context.writeAndFlush(wrapOutboundOut(.end(nil)))
+            .flatMap { () -> EventLoopFuture<Void> in
+                let pipeline = client.pipeline
+                return pipeline.removeHandler(self)
+                    .flatMap { pipeline.handler(type: ByteToMessageHandler<HTTPRequestDecoder>.self) }
+                    .flatMap { pipeline.removeHandler($0) }
+                    .flatMap { pipeline.handler(type: HTTPResponseEncoder.self) }
+                    .flatMap { pipeline.removeHandler($0) }
+                    .flatMap { () -> EventLoopFuture<Void> in
+                        do {
+                            let configuration = try TLSInterception.serverConfiguration(
+                                for: target.host, materials: materials
+                            )
+                            let sslContext = try NIOSSLContext(configuration: configuration)
+                            return pipeline.addHandlers([
+                                NIOSSLServerHandler(context: sslContext),
+                                InterceptHandler(
+                                    target: target, materials: materials, group: group,
+                                    events: events, onPinningDetected: learn
+                                ),
+                            ])
+                        } catch {
+                            return client.eventLoop.makeFailedFuture(error)
+                        }
+                    }
+            }
+            .whenFailure { error in
+                events.emit(.failed(host: target.host, message: "\(error)"))
+                client.close(promise: nil)
             }
     }
 

@@ -24,6 +24,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "NIOTLS", package: "swift-nio"),
                 .product(name: "NIOHTTP2", package: "swift-nio-http2"),
                 .product(name: "X509", package: "swift-certificates"),
                 "TamisTLS",
@@ -33,7 +34,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TamisProxyTests",
-            dependencies: ["TamisProxy", "TamisTLS", .product(name: "NIOHTTP1", package: "swift-nio"), .product(name: "NIOConcurrencyHelpers", package: "swift-nio"), .product(name: "X509", package: "swift-certificates")],
+            dependencies: ["TamisProxy", "TamisTLS", .product(name: "NIOSSL", package: "swift-nio-ssl"), .product(name: "NIOHTTP1", package: "swift-nio"), .product(name: "NIOConcurrencyHelpers", package: "swift-nio"), .product(name: "X509", package: "swift-certificates")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
