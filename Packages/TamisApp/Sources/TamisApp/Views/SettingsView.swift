@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TamisLists
+import TamisSystem
 
 /// Settings, and the two screens the design owes the user.
 ///
@@ -287,6 +288,13 @@ struct AllowlistSettings: View {
 // MARK: - About
 
 struct AboutSettings: View {
+    @State private var update: UpdateCheck.Outcome?
+    @State private var isChecking = false
+
+    private var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -297,8 +305,54 @@ struct AboutSettings: View {
                              + "entièrement en Swift. GPLv3.")
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Text("Version \(version)").foregroundStyle(.secondary)
                         Link("github.com/Black0S/Tamis",
                              destination: URL(string: "https://github.com/Black0S/Tamis")!)
+
+                        Divider().padding(.vertical, 2)
+
+                        // Checked on request, never in the background: a program that
+                        // phones home on a timer is a program that phones home.
+                        HStack(spacing: 10) {
+                            Button("Vérifier les mises à jour") {
+                                isChecking = true
+                                Task {
+                                    update = await UpdateCheck().run()
+                                    isChecking = false
+                                }
+                            }
+                            .disabled(isChecking)
+                            if isChecking { ProgressView().controlSize(.small) }
+                        }
+
+                        switch update {
+                        case .none:
+                            EmptyView()
+                        case .upToDate(let current):
+                            Label("Version \(current) — à jour", systemImage: "checkmark.circle")
+                                .foregroundStyle(.secondary)
+                        case .unavailable(let reason):
+                            Label("Vérification impossible : \(reason)",
+                                  systemImage: "wifi.exclamationmark")
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        case .available(let release):
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("\(release.name) est disponible", systemImage: "arrow.down.circle")
+                                // Nothing is downloaded here, and the reason is said
+                                // rather than left as an absence.
+                                Text("""
+                                Tamis n'installe pas ses propres mises à jour : sans \
+                                Developer ID il n'y a aucune signature à vérifier, et \
+                                un logiciel qui se place au milieu de TLS ne devrait \
+                                pas être celui qui exécute un binaire téléchargé sur la \
+                                foi d'un certificat.
+                                """)
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                Link("Voir la version publiée", destination: release.url)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(6)

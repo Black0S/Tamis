@@ -273,7 +273,8 @@ root:
 | Installer and uninstaller — dry run by default | done |
 | PAC helper — outlives the app, fails open | done |
 | Onboarding — nine screens, one password, nothing left behind | done |
-| Running a real install, app updates | not started |
+| Update check — reports, never installs | done |
+| Running a real install | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |
