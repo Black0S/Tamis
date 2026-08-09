@@ -3,6 +3,7 @@ import Testing
 import NIOCore
 import NIOPosix
 import NIOConcurrencyHelpers
+import TamisLists
 @testable import TamisProxy
 
 @Suite("CONNECT target parsing")
@@ -43,10 +44,30 @@ struct InterceptionPolicyTests {
     @Test("an excluded domain is tunnelled, subdomains included")
     func exclusionsWin() {
         let policy = InterceptionPolicy(exclusions: ["bnpparibas.net"])
-        #expect(policy.decision(forHost: "bnpparibas.net") == .tunnel(reason: .httpsExclusion(matched: "bnpparibas.net")))
-        #expect(policy.decision(forHost: "mabanque.bnpparibas.net") == .tunnel(reason: .httpsExclusion(matched: "bnpparibas.net")))
+        let expected = InterceptionPolicy.Decision.tunnel(
+            reason: .httpsExclusion(matched: "bnpparibas.net", source: "Mes exclusions")
+        )
+        #expect(policy.decision(forHost: "bnpparibas.net") == expected)
+        #expect(policy.decision(forHost: "mabanque.bnpparibas.net") == expected)
         // A domain that merely ends with the same letters is a different site.
         #expect(policy.decision(forHost: "notbnpparibas.net") == .intercept)
+    }
+
+    /// The lists Tamis ships are what run in production, so the policy is checked
+    /// against them rather than only against hand-written entries.
+    @Test("the shipped lists reach the policy")
+    func bundledExclusions() {
+        let policy = InterceptionPolicy(exclusions: BundledExclusions.makeSet())
+        #expect(policy.decision(forHost: "mabanque.bnpparibas") != .intercept)
+        #expect(policy.decision(forHost: "www.lastpass.com") != .intercept)
+        #expect(policy.decision(forHost: "ads.doubleclick.net") == .intercept)
+
+        if case .tunnel(.httpsExclusion(_, let source)) =
+            policy.decision(forHost: "mabanque.bnpparibas") {
+            #expect(source == "Banques et services financiers")
+        } else {
+            Issue.record("a bank must be tunnelled, and say which list said so")
+        }
     }
 
     @Test("an excluded application is tunnelled whatever the host")

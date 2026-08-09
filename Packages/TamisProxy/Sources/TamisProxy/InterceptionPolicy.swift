@@ -1,4 +1,5 @@
 import Foundation
+import TamisLists
 
 /// Decides, per connection, whether Tamis looks inside or gets out of the way.
 ///
@@ -17,7 +18,9 @@ public struct InterceptionPolicy: Sendable {
 
     public enum TunnelReason: Sendable, Equatable {
         /// Banks, password managers, government services — never decrypted, by design.
-        case httpsExclusion(matched: String)
+        /// The source is carried along so a log entry, or the user asking why a page
+        /// went unfiltered, gets an answer naming the list rather than a bare domain.
+        case httpsExclusion(matched: String, source: String)
         /// The user (or the pre-filled list) excluded this application.
         case excludedApp(bundleID: String)
         /// Learned: this target refused our certificate, so it pins.
@@ -28,8 +31,8 @@ public struct InterceptionPolicy: Sendable {
         case filteringDisabled
     }
 
-    /// Domains never decrypted. Sourced from the locked exclusion lists.
-    private let exclusions: DomainSet
+    /// Hosts never decrypted, keeping each source distinct. See `TamisLists`.
+    private let exclusions: ExclusionSet
     /// Applications never decrypted, by bundle identifier.
     private let excludedApps: Set<String>
     /// Targets that have proved they cannot be intercepted, learned at run time.
@@ -37,15 +40,43 @@ public struct InterceptionPolicy: Sendable {
     public let isEnabled: Bool
 
     public init(
+        exclusions: ExclusionSet,
+        excludedApps: Set<String> = [],
+        learnedPassthrough: [String] = [],
+        isEnabled: Bool = true
+    ) {
+        self.exclusions = exclusions
+        self.excludedApps = excludedApps
+        self.learnedPassthrough = DomainSet(learnedPassthrough)
+        self.isEnabled = isEnabled
+    }
+
+    /// Bare host names, for tests and for the user's own exclusions.
+    ///
+    /// Real deployments pass `BundledExclusions.makeSet()`: the shipped lists carry
+    /// exact-match quoting, `$app=` restrictions and Unicode hosts, none of which
+    /// survive being flattened to strings.
+    public init(
         exclusions: [String] = [],
         excludedApps: Set<String> = [],
         learnedPassthrough: [String] = [],
         isEnabled: Bool = true
     ) {
-        self.exclusions = DomainSet(exclusions)
-        self.excludedApps = excludedApps
-        self.learnedPassthrough = DomainSet(learnedPassthrough)
-        self.isEnabled = isEnabled
+        let source = ExclusionSource(
+            id: "user", name: "Mes exclusions", provider: "Tamis", licence: "GPLv3",
+            lock: .editable,
+            entries: exclusions.compactMap {
+                IDNA.normalize(host: $0).map {
+                    ExclusionEntry(pattern: $0, scope: .domainAndSubdomains)
+                }
+            }
+        )
+        self.init(
+            exclusions: ExclusionSet(sources: [source]),
+            excludedApps: excludedApps,
+            learnedPassthrough: learnedPassthrough,
+            isEnabled: isEnabled
+        )
     }
 
     public func decision(forHost host: String, bundleID: String? = nil) -> Decision {
@@ -54,8 +85,10 @@ public struct InterceptionPolicy: Sendable {
         if let bundleID, excludedApps.contains(bundleID) {
             return .tunnel(reason: .excludedApp(bundleID: bundleID))
         }
-        if let matched = exclusions.match(host) {
-            return .tunnel(reason: .httpsExclusion(matched: matched))
+        if let match = exclusions.match(host: host, bundleID: bundleID) {
+            return .tunnel(reason: .httpsExclusion(
+                matched: match.entry.pattern, source: match.sourceName
+            ))
         }
         if learnedPassthrough.match(host) != nil {
             return .tunnel(reason: .certificatePinning)

@@ -67,6 +67,16 @@ swift run -c release --package-path Packages/TamisFilterEngine tamis-bench easyl
 Reports how much of a list is really enforced, how many rules land in the
 always-checked bucket, and how long a match takes.
 
+### What is never decrypted
+
+```bash
+swift run --package-path Packages/TamisLists tamis-exclusions
+swift run --package-path Packages/TamisLists tamis-exclusions mabanque.bnpparibas
+```
+
+Lists the shipped HTTPS exclusions, or answers *is this host protected* — and by which
+list, exactly or with subdomains, under which application restriction.
+
 ### The application
 
 ```bash
@@ -115,13 +125,15 @@ root:
 | `TamisDNS` | Wire format, blocklists, DNS-over-HTTPS, resolver |
 | `TamisTLS` | Certificate authority and short-lived leaf certificates |
 | `TamisUserScripts` | Tampermonkey scripts and UserCSS styles |
+| `TamisLists` | HTTPS exclusions, IDNA, list sources |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
 ## What Tamis will never do
 
 - **Send anything anywhere.** No telemetry, not even a crash report.
-- **Decrypt banking or password-manager traffic.** 4 289 domains are excluded by
-  design, from two independent maintained lists, and the exclusions cannot be disabled.
+- **Decrypt banking or password-manager traffic.** 4 492 hosts are excluded by design,
+  from two independent maintained lists, embedded so they work on a first launch with
+  no network, and the banking and password-manager lists cannot be disabled.
 - **Intercept Tor Browser or Mullvad Browser.** Locked out, because filtering them
   would destroy the reason they exist.
 - **Let its own authority's key leave the privileged daemon.** A complete compromise of
@@ -136,6 +148,8 @@ root:
 | Certificate authority and leaf issuance | done |
 | Proxy: CONNECT, TLS interception, filtering, injection | done |
 | User scripts and user styles | done |
+| HTTPS exclusions — embedded, locked, wired into the proxy | done |
+| Blocklist catalogue, updates, diffs | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |
