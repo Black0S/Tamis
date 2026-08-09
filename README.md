@@ -149,7 +149,8 @@ root:
 | Proxy: CONNECT, TLS interception, filtering, injection | done |
 | User scripts and user styles | done |
 | HTTPS exclusions — embedded, locked, wired into the proxy | done |
-| Blocklist catalogue, updates, diffs | not started |
+| Blocklist catalogue — 165 lists, embedded, nothing downloaded | done |
+| List downloading, update guardrails, diffs | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |
