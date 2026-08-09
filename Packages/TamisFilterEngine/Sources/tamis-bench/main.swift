@@ -54,6 +54,35 @@ func percent(_ n: Int, _ total: Int) -> String {
     return String(format: "%.1f%%", Double(n) * 100 / Double(total))
 }
 
+// Cosmetic rules are parsed by a separate engine; the network engine counts them as
+// skipped, so the two numbers together account for every line.
+let cosmetic = measure("cosmetic build") { CosmeticEngine(rules: allLines) }
+let c = cosmetic.stats
+print("")
+print("cosmetic rules         \(c.rules)")
+print("  generic              \(c.generic)")
+print("  site-specific        \(c.specific)")
+print("  exceptions           \(c.exceptions)")
+print("  procedural           \(c.procedural)")
+print("  scriptlets           \(c.scriptlets)")
+print("  html filters         \(c.htmlFilters)")
+
+for site in ["lemonde.fr", "youtube.com", "reddit.com", "example.org"] {
+    let set = cosmetic.set(forHostname: "www." + site)
+    print(String(
+        format: "  %-14s specific %4d · procedural %3d · scriptlets %2d · css %5d bytes",
+        (site as NSString).utf8String!,
+        set.specificSelectors.count, set.proceduralSelectors.count,
+        set.scriptlets.count, set.inlineCSS().utf8.count
+    ))
+}
+
+// The number behind the specific/generic split: inlining the generic set into every
+// page instead of handing it to the runtime.
+let genericBytes = cosmetic.set(forHostname: "example.invalid").genericSelectors
+    .reduce(0) { $0 + $1.utf8.count + 2 }
+print(String(format: "  generic set if inlined: %.0f KB per page", Double(genericBytes) / 1024))
+
 // A spread of realistic requests: things that should block, things that should not,
 // short URLs and long ones.
 let samples: [(String, String, RequestType)] = [
