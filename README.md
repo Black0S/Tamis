@@ -144,7 +144,9 @@ runs the resolver on a local port and answers `dig` — nothing on the Mac is
 reconfigured, so the system does not use it yet. The Scripts screen manages
 `~/Library/Application Support/Tamis/Scripts` as an ordinary folder tree.
 
-`TAMIS_STORE` and `TAMIS_SCRIPTS` point those two directories elsewhere.
+The History screen shows what the resolver decided, and the DNS resolver writes to it.
+
+`TAMIS_STORE`, `TAMIS_SCRIPTS` and `TAMIS_HISTORY` point those elsewhere.
 
 `TAMIS_STORE=/some/path` points it at a throwaway set of lists instead.
 
@@ -227,7 +229,7 @@ root:
 | User scripts and styles reaching real pages through the proxy | done |
 | Applications screen — browser discovery, three-state policy | done |
 | Decision log — schema, batching, retention, erase | done |
-| History screen | not started |
+| History screen — recurring domains, retention, erase | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |

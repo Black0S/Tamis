@@ -70,6 +70,7 @@ struct MainWindow: View {
             case .dns:              DNSView()
             case .scripts:          ScriptsView()
             case .applications:     ApplicationsView()
+            case .history:          HistoryView()
             case .some(let section): PlaceholderView(section: section)
             }
         }
@@ -115,5 +116,6 @@ struct PlaceholderView: View {
         .environment(ResolverModel())
         .environment(ScriptsModel.makeDefault())
         .environment(ApplicationsModel())
+        .environment(HistoryModel.makeDefault())
         .frame(width: 1000, height: 680)
 }

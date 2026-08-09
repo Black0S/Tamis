@@ -8,11 +8,19 @@ struct TamisApp: App {
     @State private var resolver = ResolverModel()
     @State private var scripts = ScriptsModel.makeDefault()
     @State private var applications = ApplicationsModel()
+    @State private var history = HistoryModel.makeDefault()
 
     init() {
         let lists = FilterListsModel.makeDefault()
         let engines = EngineModel(manager: lists.manager)
         lists.onListsChanged = { [engines] in engines.rebuild() }
+        // The resolver writes what it decides; it works without a history, and the app
+        // is what gives it one.
+        let history = HistoryModel.makeDefault()
+        let resolver = ResolverModel()
+        resolver.history = history
+        _history = State(initialValue: history)
+        _resolver = State(initialValue: resolver)
         _lists = State(initialValue: lists)
         _engines = State(initialValue: engines)
     }
@@ -26,6 +34,7 @@ struct TamisApp: App {
                 .environment(resolver)
                 .environment(scripts)
                 .environment(applications)
+                .environment(history)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)

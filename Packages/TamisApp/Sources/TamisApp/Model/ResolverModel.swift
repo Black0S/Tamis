@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import TamisDNS
+import TamisHistory
 
 /// The local resolver, run from inside the app.
 ///
@@ -45,6 +46,8 @@ final class ResolverModel {
     private var server: DNSServer?
     private var socket: DNSSocket?
     private var pollTask: Task<Void, Never>?
+    /// Where decisions are kept. Set by the app; the resolver works without one.
+    var history: HistoryModel?
 
     static let recentLimit = 50
 
@@ -110,6 +113,25 @@ final class ResolverModel {
     private func record(name: String, outcome: ResolverPolicy.Outcome) {
         recent.insert(Decision(date: .now, name: name, outcome: outcome), at: 0)
         if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
+
+        guard let history else { return }
+        let action: EventStore.Action
+        var rule: String?
+        switch outcome {
+        case .forward:
+            action = .allowed
+        case .block(let reason):
+            action = .blocked
+            switch reason {
+            case .blocklist(let matched): rule = matched
+            case .firefoxCanary:          rule = "canari Firefox"
+            }
+        }
+        // No URL: a resolver never sees one, and inventing the query name as a URL
+        // would put something in that column that was never on the wire.
+        Task { await history.record(.init(
+            domain: name, action: action, layer: .dns, rule: rule
+        )) }
     }
 
     private static func describe(_ error: Error) -> String {

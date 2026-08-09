@@ -83,6 +83,8 @@ public actor EventStore {
         public var distinctDomains = 0
         public var fileBytes = Int64(0)
         public var oldest: Date?
+
+        public init() {}
     }
 
     public enum Failure: Error, Sendable, Equatable {
