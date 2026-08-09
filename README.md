@@ -234,10 +234,10 @@ root:
 | Decision log — schema, batching, retention, erase | done |
 | History screen — recurring domains, retention, erase | done |
 | Alerts screen — conditions derived, never stored | done |
-| Settings screen | not started |
+| Settings screen — locations, exclusions audit, allowlist audit | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
-| SwiftUI application | shell only — navigation and dashboard, no engine behind it |
+| SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |
 
 HTTP/2 negotiates on both sides and the bridge installs, but response frames are not

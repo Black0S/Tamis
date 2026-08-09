@@ -34,6 +34,8 @@ public actor ListManager {
 
     private let catalog: FilterListCatalog
     private let store: ListStore
+    /// Where the lists live, for the interface's "reveal in the Finder".
+    public nonisolated var storeRoot: URL { store.root }
     private let fetcher: any ListFetching
     /// Readable JSON, kept next to the lists so copying one directory is a backup.
     private let stateURL: URL

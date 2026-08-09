@@ -76,6 +76,7 @@ struct MainWindow: View {
             case .applications:     ApplicationsView()
             case .history:          HistoryView()
             case .alerts:           AlertsView(onOpen: { selection = $0 })
+            case .settings:         SettingsView()
             case .some(let section): PlaceholderView(section: section)
             }
         }
