@@ -7,6 +7,7 @@ import NIOConcurrencyHelpers
 import X509
 import SwiftASN1
 import TamisTLS
+import TamisFilterEngine
 @testable import TamisProxy
 
 private func der(_ certificate: Certificate) throws -> [UInt8] {
@@ -158,6 +159,74 @@ struct TLSInterceptionTests {
                 return false
             }
             #expect(intercepted, "events: \(recorded)")
+            await teardown()
+        } catch {
+            await teardown()
+            throw error
+        }
+    }
+
+    /// What the whole project is for: a request matched by a filter list never reaches
+    /// the origin, inside a TLS session Tamis decrypted itself.
+    @Test("an advert is blocked inside an intercepted session")
+    func advertIsBlocked() async throws {
+        let origin = try TLSOriginServer()
+        let originPort = try await origin.start(hostname: "localhost")
+        let (materials, caPEM) = try makeMaterials(trusting: try origin.authorityDER)
+
+        let caFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tamis-test-ca-\(UUID().uuidString).pem")
+        try caPEM.write(to: caFile, atomically: true, encoding: .utf8)
+
+        let recorder = EventRecorder()
+        let events = EventSink { event in Task { await recorder.record(event) } }
+        let proxy = ProxyServer(
+            configuration: .init(
+                port: 0,
+                interception: materials,
+                engine: FilterEngine(rules: "||localhost/ads/")
+            ),
+            events: events
+        )
+        try await proxy.start()
+
+        func teardown() async {
+            try? await proxy.stop()
+            await origin.stop()
+            try? FileManager.default.removeItem(at: caFile)
+        }
+
+        do {
+            let proxyPort = try #require(proxy.boundPort)
+
+            // Matched by the rule: must never reach the origin.
+            let blocked = try curl([
+                "-s", "--max-time", "15", "-w", "\n%{http_code}",
+                "--cacert", caFile.path, "-x", "http://127.0.0.1:\(proxyPort)",
+                "https://localhost:\(originPort)/ads/banner.png",
+            ])
+            #expect(!blocked.body.contains("tamis-tls-origin-ok"), "advert was served")
+            // 204 rather than a reset: some sites treat a network error as a reason to
+            // retry forever, and a blocker that breaks pages gets uninstalled.
+            #expect(blocked.body.contains("204"), "got: \(blocked.body)")
+
+            // Not matched: must be served untouched.
+            let allowed = try curl([
+                "-s", "--max-time", "15",
+                "--cacert", caFile.path, "-x", "http://127.0.0.1:\(proxyPort)",
+                "https://localhost:\(originPort)/article.html",
+            ])
+            #expect(allowed.body.contains("tamis-tls-origin-ok"), "trace: \(allowed.trace)")
+
+            try await Task.sleep(for: .milliseconds(300))
+            let recorded = await recorder.events
+            let blockedEvent = recorded.contains { event in
+                if case .requestBlocked(let url, let rule) = event {
+                    return url.contains("/ads/banner.png") && rule == "||localhost/ads/"
+                }
+                return false
+            }
+            #expect(blockedEvent, "events: \(recorded)")
             await teardown()
         } catch {
             await teardown()

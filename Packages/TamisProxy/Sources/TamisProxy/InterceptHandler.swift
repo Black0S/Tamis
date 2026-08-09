@@ -7,6 +7,8 @@ import NIOConcurrencyHelpers
 import X509
 import SwiftASN1
 import TamisTLS
+import TamisFilterEngine
+import NIOHTTP1
 
 /// Builds the two TLS sessions an intercepted connection is made of.
 ///
@@ -169,30 +171,36 @@ final class UpstreamDiagnosticHandler: ChannelInboundHandler {
 /// as a connection to an origin nobody is going to talk to.
 final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
     typealias OutboundOut = ByteBuffer
 
     private let target: (host: String, port: Int)
     private let materials: TLSInterception.Materials
     private let group: EventLoopGroup
     private let events: EventSink
+    private let engine: FilterEngine?
     private let onPinningDetected: @Sendable (String) -> Void
 
     private var upstream: Channel?
     private var pending: [ByteBuffer] = []
     private var handshakeDone = false
     private var failed = false
+    /// True once the HTTP handlers are installed downstream and reads may flow on.
+    private var ready = false
 
     init(
         target: (host: String, port: Int),
         materials: TLSInterception.Materials,
         group: EventLoopGroup,
         events: EventSink,
+        engine: FilterEngine?,
         onPinningDetected: @escaping @Sendable (String) -> Void
     ) {
         self.target = target
         self.materials = materials
         self.group = group
         self.events = events
+        self.engine = engine
         self.onPinningDetected = onPinningDetected
     }
 
@@ -205,14 +213,13 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let buffer = unwrapInboundIn(data)
-        guard let upstream, upstream.isActive else {
+        guard ready else {
             // Decrypted bytes can arrive before the origin session is up; holding them
             // is the difference between a working first request and a truncated one.
-            pending.append(buffer)
+            pending.append(unwrapInboundIn(data))
             return
         }
-        upstream.writeAndFlush(buffer, promise: nil)
+        context.fireChannelRead(data)
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -244,6 +251,9 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         let host = target.host
         let materials = self.materials
         let onPinning = self.onPinningDetected
+        // No engine loaded is the first-launch state: traffic is parsed and forwarded,
+        // nothing matches — precisely what "no list chosen yet" should do.
+        let engineOrEmpty = self.engine ?? FilterEngine(rules: "")
 
         let verificationOutcome = NIOLockedValueBox<SystemTrustVerifier.Result?>(nil)
 
@@ -269,7 +279,9 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                             host: host, events: events, outcome: verificationOutcome,
                             onClientCertificateRequired: onPinning
                         ),
-                        RelayHandler(peer: client),
+                        HTTPRequestEncoder(),
+                        ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
+                        UpstreamResponseHandler(client: client),
                     ])
                 } catch {
                     return upstream.eventLoop.makeFailedFuture(error)
@@ -281,9 +293,31 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                 switch result {
                 case .success(let upstream):
                     self.upstream = upstream
-                    for buffer in self.pending { upstream.writeAndFlush(buffer, promise: nil) }
-                    self.pending.removeAll()
                     events.emit(.intercepted(host: host))
+
+                    // Decrypted bytes stop being opaque here: both sides are parsed, so
+                    // the engine sees requests and the injection layer will later see
+                    // responses without another round of parsing.
+                    //
+                    // The handlers are appended at the tail, which is already after this
+                    // one. This handler stays in place rather than removing itself: the
+                    // buffered bytes have to be re-delivered *downstream* of the TLS
+                    // handler, and only a context positioned here can do that.
+                    // `pipeline.fireChannelRead` starts at the head, which would feed
+                    // already-decrypted bytes back into TLS.
+                    client.pipeline.addHandlers([
+                        HTTPResponseEncoder(),
+                        ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
+                        HTTPFilteringHandler(
+                            engine: engineOrEmpty, host: host, upstream: upstream, events: events
+                        ),
+                    ]).whenComplete { _ in
+                        self.ready = true
+                        for buffer in self.pending {
+                            context.fireChannelRead(self.wrapInboundOut(buffer))
+                        }
+                        self.pending.removeAll()
+                    }
                 case .failure(let error):
                     // Reaching here means TCP itself failed; a TLS rejection surfaces
                     // on the channel instead, in UpstreamDiagnosticHandler.

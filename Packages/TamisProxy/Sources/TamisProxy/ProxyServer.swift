@@ -4,6 +4,7 @@ import NIOPosix
 import NIOConcurrencyHelpers
 import NIOHTTP1
 import NIOSSL
+import TamisFilterEngine
 
 public enum ProxyError: Error, Sendable, Equatable {
     case malformedConnectTarget(String)
@@ -25,17 +26,23 @@ public final class ProxyServer: Sendable {
         /// Absent means Tamis can only tunnel — which is a valid state, not a broken
         /// one: it is what a paused or not-yet-onboarded installation looks like.
         public var interception: TLSInterception.Materials?
+        /// Absent means intercepted traffic is inspected but nothing matches — which
+        /// is exactly the first-launch state, since no blocklist is loaded until the
+        /// user chooses one.
+        public var engine: FilterEngine?
 
         public init(
             host: String = "127.0.0.1",
             port: Int = 0,
             policy: InterceptionPolicy = .init(),
-            interception: TLSInterception.Materials? = nil
+            interception: TLSInterception.Materials? = nil,
+            engine: FilterEngine? = nil
         ) {
             self.host = host
             self.port = port
             self.policy = policy
             self.interception = interception
+            self.engine = engine
         }
     }
 
@@ -92,7 +99,8 @@ public final class ProxyServer: Sendable {
                     ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
                     ConnectHandler(
                         policy: configuration.policy, group: group, events: events,
-                        interception: configuration.interception, learn: learn
+                        interception: configuration.interception,
+                        engine: configuration.engine, learn: learn
                     ),
                 ])
             }
@@ -129,6 +137,8 @@ public final class EventSink: Sendable {
         /// The origin's own certificate did not validate. A security finding, never
         /// answered by falling back to a tunnel.
         case upstreamCertificateRejected(host: String, reason: String, isNameMismatch: Bool)
+        case requestAllowed(url: String)
+        case requestBlocked(url: String, rule: String)
         case failed(host: String, message: String)
     }
 
@@ -158,6 +168,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let group: EventLoopGroup
     private let events: EventSink
     private let interception: TLSInterception.Materials?
+    private let engine: FilterEngine?
     private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
     private var mode: Mode = .tunnel
@@ -169,12 +180,14 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         group: EventLoopGroup,
         events: EventSink,
         interception: TLSInterception.Materials?,
+        engine: FilterEngine?,
         learn: @escaping @Sendable (String) -> Void
     ) {
         self.policy = policy
         self.group = group
         self.events = events
         self.interception = interception
+        self.engine = engine
         self.learn = learn
     }
 
@@ -293,6 +306,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         let events = self.events
         let group = self.group
         let learn = self.learn
+        let engine = self.engine
 
         var headers = HTTPHeaders()
         headers.add(name: "Content-Length", value: "0")
@@ -316,7 +330,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                                 NIOSSLServerHandler(context: sslContext),
                                 InterceptHandler(
                                     target: target, materials: materials, group: group,
-                                    events: events, onPinningDetected: learn
+                                    events: events, engine: engine, onPinningDetected: learn
                                 ),
                             ])
                         } catch {
