@@ -188,11 +188,15 @@ root:
 | `TamisUserScripts` | Tampermonkey scripts and UserCSS styles |
 | `TamisLists` | HTTPS exclusions, IDNA, list sources |
 | `TamisApps` | Browser discovery, engine characterisation, per-app policy |
+| `TamisHistory` | The decision log: schema, batching, retention |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
 ## What Tamis will never do
 
 - **Send anything anywhere.** No telemetry, not even a crash report.
+- **Keep the URL of a request it allowed.** Query strings carry session tokens, and
+  they answer no question anyone asks later. Full URLs are stored for blocks only —
+  enforced when the event is constructed, not by convention.
 - **Decrypt banking or password-manager traffic.** 4 492 hosts are excluded by design,
   from two independent maintained lists, embedded so they work on a first launch with
   no network, and the banking and password-manager lists cannot be disabled.
@@ -222,6 +226,8 @@ root:
 | Scripts screen — filesystem tree, editor, install, revert | done |
 | User scripts and styles reaching real pages through the proxy | done |
 | Applications screen — browser discovery, three-state policy | done |
+| Decision log — schema, batching, retention, erase | done |
+| History screen | not started |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
