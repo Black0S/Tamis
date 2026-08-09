@@ -259,6 +259,13 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         installed.whenComplete { result in
             switch result {
             case .success:
+                // Only now can anything parse what the origin already sent. Over
+                // HTTP/2 that is its SETTINGS frame, which arrived before this
+                // pipeline existed.
+                self.upstream.pipeline.handler(type: HandshakeReporter.self)
+                    .whenSuccess { reporter in
+                        self.upstream.eventLoop.execute { reporter.releaseReads() }
+                    }
                 events.emit(.intercepted(host: host, negotiated: self.negotiated.rawValue))
                 self.ready = true
                 // Replayed through this handler's own context: it is the only position

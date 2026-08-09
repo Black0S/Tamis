@@ -91,7 +91,6 @@ enum HTTP2Bridge {
         upstreamMultiplexer.createStreamChannel(promise: promise) { upstreamStream in
             // A stream channel does not inherit the parent's autoRead, so without this
             // the response frames are delivered to a channel that never asks for them.
-            // A stream channel does not inherit the parent's autoRead.
             upstreamStream.setOption(.autoRead, value: true).flatMap {
             upstreamStream.pipeline.addHandlers([
                 HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),

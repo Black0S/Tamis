@@ -55,12 +55,10 @@ enum UpstreamConnector {
             .channelInitializer { channel in
                 do {
                     var configuration = TLSInterception.clientConfiguration()
-                    // Only what the bridge can actually carry today. Offering h2 here
-                    // would have it negotiated and then hang: the origin answers, but
-                    // the response never reaches the upstream stream handler. The
-                    // machinery is written and tested up to that point — see
-                    // HTTP2Bridge — and this line is the switch that turns it on.
-                    configuration.applicationProtocols = ["http/1.1"]
+                    // Order matters: the origin picks the first it supports, so h2 is
+                    // offered ahead of http/1.1 and whatever it chooses is mirrored
+                    // back to the client. See HTTP2Bridge for why that direction.
+                    configuration.applicationProtocols = ["h2", "http/1.1"]
                     let context = try NIOSSLContext(configuration: configuration)
                     let callback = TLSInterception.makeVerificationCallback(
                         hostname: host, materials: materials
@@ -102,17 +100,33 @@ enum UpstreamConnector {
     }
 }
 
-/// Reports the outcome of a TLS handshake exactly once.
+/// Reports the outcome of a TLS handshake exactly once, and holds what arrives until
+/// somebody downstream can read it.
 ///
 /// `connect()` completes when TCP is up; the handshake runs afterwards, so its result
 /// arrives as a channel event rather than as a connect result. Watching the wrong one
 /// turns a rejected certificate into a generic connection failure.
+///
+/// The holding is the other half, and it is what makes HTTP/2 work at all. Between the
+/// handshake completing and the protocol handlers being installed, this handler is the
+/// last one in the pipeline — anything the origin sends in that window reaches a
+/// pipeline with no reader and is dropped on the floor. Over HTTP/1.1 that window is
+/// empty, because the origin says nothing until it is asked. Over HTTP/2 the origin
+/// speaks first: its SETTINGS frame is the very first thing on the connection. Lose it
+/// and `NIOHTTP2Handler` sees the peer acknowledge settings it never sent, calls that a
+/// PROTOCOL_ERROR, and sends GOAWAY — after which the response arrives on a connection
+/// that is already finished, and never reaches the stream.
 final class HandshakeReporter: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
 
     private let onCompleted: @Sendable (String?) -> Void
     private let onFailed: @Sendable (Error) -> Void
     private var reported = false
+
+    private var held: [ByteBuffer] = []
+    private var isHolding = true
+    private var context: ChannelHandlerContext?
 
     init(
         onCompleted: @escaping @Sendable (String?) -> Void,
@@ -120,6 +134,27 @@ final class HandshakeReporter: ChannelInboundHandler {
     ) {
         self.onCompleted = onCompleted
         self.onFailed = onFailed
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) { self.context = context }
+    func handlerRemoved(context: ChannelHandlerContext) { self.context = nil }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard isHolding else { context.fireChannelRead(data); return }
+        held.append(unwrapInboundIn(data))
+    }
+
+    /// Replays what was held, through this handler's own context so it enters the
+    /// pipeline below the TLS handler rather than above it.
+    ///
+    /// Must be called on the channel's event loop.
+    func releaseReads() {
+        guard isHolding, let context else { isHolding = false; return }
+        isHolding = false
+        guard !held.isEmpty else { return }
+        for buffer in held { context.fireChannelRead(wrapInboundOut(buffer)) }
+        held.removeAll()
+        context.fireChannelReadComplete()
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {

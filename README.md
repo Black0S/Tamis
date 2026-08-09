@@ -172,6 +172,11 @@ TAMIS_LIVE_TESTS=1 swift test --package-path Packages/TamisDNS
 | **DNS** | The whole machine, daemons included | Local resolver, blocklists, encrypted DNS upstream |
 | **Proxy** | Browsers and applications that honour the system proxy | Request blocking, cosmetic filtering, user scripts |
 
+The proxy speaks HTTP/2 when the origin does. Over HTTP/1.1 a browser opens six
+connections per origin, so Tamis performs six TLS handshakes on each side; over HTTP/2
+it opens one and multiplexes. For a page with eighty resources that is eighty handshakes
+or one.
+
 Three processes, split by privilege. Nothing exposed to hostile content ever runs as
 root:
 
@@ -236,14 +241,9 @@ root:
 | Alerts screen — conditions derived, never stored | done |
 | Settings screen — locations, exclusions audit, allowlist audit | done |
 | Installing: system proxy, port 53, trusted authority | not started |
-| HTTP/2 | written, not enabled — see below |
+| HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |
-
-HTTP/2 negotiates on both sides and the bridge installs, but response frames are not
-delivered to the stream channel. It is deliberately not advertised, since negotiating
-a protocol and then hanging is worse than not offering it. The end-to-end tests are
-committed and disabled, carrying the diagnosis.
 
 ## Design notes
 
