@@ -8,6 +8,7 @@ import X509
 import SwiftASN1
 import TamisTLS
 import TamisFilterEngine
+import TamisUserScripts
 @testable import TamisProxy
 
 private func derBytes(_ certificate: Certificate) throws -> [UInt8] {
@@ -121,6 +122,7 @@ struct CosmeticEndToEndTests {
 
     private func run(
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript] = [],
         originHeaders: [(String, String)] = [],
         curlExtra: [String] = [],
         _ body: (_ page: String, _ events: [EventSink.Event]) async throws -> Void
@@ -143,7 +145,10 @@ struct CosmeticEndToEndTests {
         let recorder = EventRecorder()
         let events = EventSink { event in Task { await recorder.record(event) } }
         let proxy = ProxyServer(
-            configuration: .init(port: 0, interception: materials, cosmetic: cosmetic),
+            configuration: .init(
+                port: 0, interception: materials, cosmetic: cosmetic,
+                userScripts: userScripts
+            ),
             events: events
         )
         try await proxy.start()
@@ -276,6 +281,48 @@ struct CosmeticEndToEndTests {
             #expect(page.contains(".ad-banner"))
             #expect(!page.contains(".sponsored-post"))
             #expect(!page.contains(".newsletter-popup"))
+        }
+    }
+
+    /// User scripts run from the proxy rather than a browser, so they apply in every
+    /// browser at once — including the ones that no longer accept extensions.
+    @Test("a matching user script is injected into the page")
+    func userScriptIsInjected() async throws {
+        let script = try UserScript.parse("""
+        // ==UserScript==
+        // @name         Local test
+        // @match        *://localhost/*
+        // @run-at       document-start
+        // @grant        GM_addStyle
+        // ==/UserScript==
+        GM_addStyle(".ad-banner { outline: 1px solid red; }");
+        """)
+        try await run(cosmetic: nil, userScripts: [script]) { page, events in
+            #expect(page.contains("<script nonce="))
+            #expect(page.contains("GM_addStyle"))
+            #expect(page.contains("Local test"))
+            #expect(page.contains("Contenu de l'article."))
+
+            let injected = events.contains { event in
+                if case .userScriptsInjected(_, let names) = event { return names == ["Local test"] }
+                return false
+            }
+            #expect(injected, "events: \(events)")
+        }
+    }
+
+    @Test("a user script that does not match the page is not injected")
+    func nonMatchingUserScript() async throws {
+        let script = try UserScript.parse("""
+        // ==UserScript==
+        // @name  Elsewhere
+        // @match *://other.example/*
+        // ==/UserScript==
+        console.log("nope");
+        """)
+        try await run(cosmetic: nil, userScripts: [script]) { page, _ in
+            #expect(!page.contains("<script nonce="))
+            #expect(!page.contains("nope"))
         }
     }
 

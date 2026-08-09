@@ -4,6 +4,7 @@ import NIOHTTP1
 import NIOHTTP2
 import NIOConcurrencyHelpers
 import TamisFilterEngine
+import TamisUserScripts
 
 /// Pairs one client HTTP/2 stream with one upstream HTTP/2 stream.
 ///
@@ -29,6 +30,8 @@ enum HTTP2Bridge {
         host: String,
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         events: EventSink
     ) -> EventLoopFuture<Void> {
         // The inline multiplexer, not the legacy standalone one: the two coexist in
@@ -57,6 +60,7 @@ enum HTTP2Bridge {
                             host: host,
                             engine: engine,
                             cosmetic: cosmetic,
+                            userScripts: userScripts, resolvedRequires: resolvedRequires,
                             events: events
                         )
                     }
@@ -72,6 +76,8 @@ enum HTTP2Bridge {
         host: String,
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         events: EventSink
     ) -> EventLoopFuture<Void> {
         let promise = clientStream.eventLoop.makePromise(of: Channel.self)
@@ -86,6 +92,7 @@ enum HTTP2Bridge {
                 HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
                 ResponseInjectingHandler(
                     client: clientStream, host: host, cosmetic: cosmetic,
+                    userScripts: userScripts, resolvedRequires: resolvedRequires,
                     context: requestContext, events: events, propagatesClose: false
                 ),
             ])

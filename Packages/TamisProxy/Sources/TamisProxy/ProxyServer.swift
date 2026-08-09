@@ -5,6 +5,7 @@ import NIOConcurrencyHelpers
 import NIOHTTP1
 import NIOSSL
 import TamisFilterEngine
+import TamisUserScripts
 
 public enum ProxyError: Error, Sendable, Equatable {
     case malformedConnectTarget(String)
@@ -33,6 +34,12 @@ public final class ProxyServer: Sendable {
         /// Absent means requests are still filtered but nothing is hidden — blocked
         /// adverts leave their holes open.
         public var cosmetic: CosmeticEngine?
+        /// User scripts, already parsed. Empty is the ordinary state — most pages have
+        /// none, and the payload only grows for the ones that do.
+        public var userScripts: [UserScript] = []
+        /// Contents of `@require` URLs, fetched and cached by the app. A script whose
+        /// libraries are missing is skipped rather than run half-initialised.
+        public var resolvedRequires: [URL: String] = [:]
 
         public init(
             host: String = "127.0.0.1",
@@ -40,7 +47,9 @@ public final class ProxyServer: Sendable {
             policy: InterceptionPolicy = .init(),
             interception: TLSInterception.Materials? = nil,
             engine: FilterEngine? = nil,
-            cosmetic: CosmeticEngine? = nil
+            cosmetic: CosmeticEngine? = nil,
+            userScripts: [UserScript] = [],
+            resolvedRequires: [URL: String] = [:]
         ) {
             self.host = host
             self.port = port
@@ -48,6 +57,8 @@ public final class ProxyServer: Sendable {
             self.interception = interception
             self.engine = engine
             self.cosmetic = cosmetic
+            self.userScripts = userScripts
+            self.resolvedRequires = resolvedRequires
         }
     }
 
@@ -106,7 +117,10 @@ public final class ProxyServer: Sendable {
                         policy: configuration.policy, group: group, events: events,
                         interception: configuration.interception,
                         engine: configuration.engine,
-                        cosmetic: configuration.cosmetic, learn: learn
+                        cosmetic: configuration.cosmetic,
+                        userScripts: configuration.userScripts,
+                        resolvedRequires: configuration.resolvedRequires,
+                        learn: learn
                     ),
                 ])
             }
@@ -150,6 +164,10 @@ public final class EventSink: Sendable {
         /// Scriptlets a list asked for that this build does not implement. Surfaced
         /// because the page keeps working while quietly doing less than the list says.
         case scriptletsSkipped(host: String, names: [String])
+        case userScriptsInjected(host: String, names: [String])
+        /// A script asked for a capability this build does not provide. Reported rather
+        /// than approximated, so a script that quietly does less is visible.
+        case userScriptGrantUnavailable(script: String, grant: String)
         case requestAllowed(url: String)
         case requestBlocked(url: String, rule: String)
         case failed(host: String, message: String)
@@ -183,6 +201,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let interception: TLSInterception.Materials?
     private let engine: FilterEngine?
     private let cosmetic: CosmeticEngine?
+    private let userScripts: [UserScript]
+    private let resolvedRequires: [URL: String]
     private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
     private var mode: Mode = .tunnel
@@ -196,6 +216,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         interception: TLSInterception.Materials?,
         engine: FilterEngine?,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         learn: @escaping @Sendable (String) -> Void
     ) {
         self.policy = policy
@@ -204,6 +226,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.interception = interception
         self.engine = engine
         self.cosmetic = cosmetic
+        self.userScripts = userScripts
+        self.resolvedRequires = resolvedRequires
         self.learn = learn
     }
 
@@ -325,6 +349,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         let learn = self.learn
         let engine = self.engine ?? FilterEngine(rules: "")
         let cosmetic = self.cosmetic
+        let userScripts = self.userScripts
+        let resolvedRequires = self.resolvedRequires
 
         UpstreamConnector.connect(
             to: target, materials: materials, on: context.eventLoop
@@ -334,7 +360,9 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                 self.answerAndInstallTLS(
                     context: context, target: target, materials: materials,
                     upstream: upstream, negotiated: negotiated,
-                    engine: engine, cosmetic: cosmetic, learn: learn
+                    engine: engine, cosmetic: cosmetic,
+                    userScripts: userScripts, resolvedRequires: resolvedRequires,
+                    learn: learn
                 )
 
             case .success(.requiresClientCertificate):
@@ -370,6 +398,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         negotiated: NegotiatedProtocol,
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         learn: @escaping @Sendable (String) -> Void
     ) {
         let client = context.channel
@@ -398,8 +428,9 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                                 InterceptHandler(
                                     target: target, upstream: upstream,
                                     negotiated: negotiated, engine: engine,
-                                    cosmetic: cosmetic, events: events,
-                                    onPinningDetected: learn
+                                    cosmetic: cosmetic, userScripts: userScripts,
+                                    resolvedRequires: resolvedRequires,
+                                    events: events, onPinningDetected: learn
                                 ),
                             ])
                         } catch {

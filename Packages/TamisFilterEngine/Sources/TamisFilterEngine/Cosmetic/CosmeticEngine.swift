@@ -20,6 +20,8 @@ public struct CosmeticSet: Sendable, Equatable {
     /// `##^` selectors, applied to the HTML stream before the browser parses it.
     public var htmlFilters: [String] = []
 
+    public init() {}
+
     public var isEmpty: Bool {
         specificSelectors.isEmpty && genericSelectors.isEmpty && proceduralSelectors.isEmpty
             && styleRules.isEmpty && scriptlets.isEmpty && htmlFilters.isEmpty

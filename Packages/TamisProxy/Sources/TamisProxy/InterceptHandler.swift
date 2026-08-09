@@ -9,6 +9,7 @@ import X509
 import SwiftASN1
 import TamisTLS
 import TamisFilterEngine
+import TamisUserScripts
 
 /// Builds the two TLS sessions an intercepted connection is made of.
 ///
@@ -130,6 +131,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let negotiated: NegotiatedProtocol
     private let engine: FilterEngine
     private let cosmetic: CosmeticEngine?
+    private let userScripts: [UserScript]
+    private let resolvedRequires: [URL: String]
     private let events: EventSink
     private let onPinningDetected: @Sendable (String) -> Void
 
@@ -144,6 +147,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         negotiated: NegotiatedProtocol,
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         events: EventSink,
         onPinningDetected: @escaping @Sendable (String) -> Void
     ) {
@@ -152,6 +157,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.negotiated = negotiated
         self.engine = engine
         self.cosmetic = cosmetic
+        self.userScripts = userScripts
+        self.resolvedRequires = resolvedRequires
         self.events = events
         self.onPinningDetected = onPinningDetected
     }
@@ -203,13 +210,17 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         let events = self.events
         let engine = self.engine
         let cosmetic = self.cosmetic
+        let userScripts = self.userScripts
+        let resolvedRequires = self.resolvedRequires
 
         let installed: EventLoopFuture<Void>
         switch negotiated {
         case .http2:
             installed = HTTP2Bridge.install(
                 client: client, upstream: upstream, host: host,
-                engine: engine, cosmetic: cosmetic, events: events
+                engine: engine, cosmetic: cosmetic,
+                userScripts: userScripts, resolvedRequires: resolvedRequires,
+                events: events
             )
         case .http1:
             let requestContext = RequestContext()
@@ -218,6 +229,7 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                 ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
                 ResponseInjectingHandler(
                     client: client, host: host, cosmetic: cosmetic,
+                    userScripts: userScripts, resolvedRequires: resolvedRequires,
                     context: requestContext, events: events, propagatesClose: true
                 ),
             ])

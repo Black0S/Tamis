@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import TamisFilterEngine
+import TamisUserScripts
 
 /// Carries what the response side needs to know about the request that caused it.
 ///
@@ -11,10 +12,18 @@ import TamisFilterEngine
 final class RequestContext: @unchecked Sendable {
     private let lock = NSLock()
     private var _secFetchDest: String?
+    private var _path: String?
 
     var secFetchDest: String? {
         get { lock.lock(); defer { lock.unlock() }; return _secFetchDest }
         set { lock.lock(); defer { lock.unlock() }; _secFetchDest = newValue }
+    }
+
+    /// The request line's path. User scripts match on the whole URL, which the response
+    /// side cannot otherwise see.
+    var path: String? {
+        get { lock.lock(); defer { lock.unlock() }; return _path }
+        set { lock.lock(); defer { lock.unlock() }; _path = newValue }
     }
 }
 
@@ -40,6 +49,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     private let client: Channel
     private let host: String
     private let cosmetic: CosmeticEngine?
+    private let userScripts: [UserScript]
+    private let resolvedRequires: [URL: String]
     private let context: RequestContext
     private let events: EventSink
     /// See the note on ``HTTPFilteringHandler``: streams must not close their peer.
@@ -50,6 +61,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         client: Channel,
         host: String,
         cosmetic: CosmeticEngine?,
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
         context: RequestContext,
         events: EventSink,
         propagatesClose: Bool
@@ -57,6 +70,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         self.client = client
         self.host = host
         self.cosmetic = cosmetic
+        self.userScripts = userScripts
+        self.resolvedRequires = resolvedRequires
         self.context = context
         self.events = events
         self.propagatesClose = propagatesClose
@@ -65,7 +80,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     func channelRead(context ctx: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case .head(let head):
-            guard cosmetic != nil,
+            guard cosmetic != nil || !userScripts.isEmpty,
                   ResponseEligibility.verdict(for: head, requestType: context.secFetchDest) == .eligible
             else {
                 mode = .passthrough
@@ -112,7 +127,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
 
     private func finish(head: HTTPResponseHead, body: [UInt8], trailers: HTTPHeaders?) {
         let encoding = ContentDecoder.Encoding.parse(head.headers.first(name: "Content-Encoding"))
-        guard let encoding, let cosmetic else {
+        guard let encoding else {
             flushUnmodified(head: head, body: body, trailers: trailers)
             return
         }
@@ -131,7 +146,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         // The document is already in hand, so generic rules can be narrowed to the
         // classes and ids it actually carries — a few hundred bytes instead of 216 KB.
         let tokens = DocumentTokens.scan(decoded)
-        let set = cosmetic.set(forHostname: host, documentTokens: tokens)
+        let set = cosmetic?.set(forHostname: host, documentTokens: tokens) ?? CosmeticSet()
         let css = set.inlineCSS()
         // Procedural selectors are parsed here, not in the page: a malformed rule is
         // rejected before it can reach a browser, and the runtime stays an interpreter
@@ -149,8 +164,15 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
             events.emit(.scriptletsSkipped(host: host, names: skipped))
         }
 
+        // User scripts are the user's own code and run last, after the rules from
+        // lists, so they can undo anything a list did that the user disagrees with.
+        let userScript = Self.userScriptSource(
+            userScripts: userScripts, resolvedRequires: resolvedRequires,
+            host: host, path: context.path, events: events
+        )
+
         // Scriptlets run first: they exist to be in place before the page's own code.
-        let script = [scriptletResult?.source, runtime]
+        let script = [scriptletResult?.source, runtime, userScript]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
@@ -191,6 +213,31 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
             bytes: markup.utf8.count
         ))
         flushDecoded(head: newHead, body: rewritten, trailers: trailers)
+    }
+
+    /// Builds the user-script payload for this page, reporting anything it cannot run.
+    static func userScriptSource(
+        userScripts: [UserScript],
+        resolvedRequires: [URL: String],
+        host: String,
+        path: String?,
+        events: EventSink
+    ) -> String? {
+        guard !userScripts.isEmpty else { return nil }
+        guard let url = URL(string: "https://\(host)\(path ?? "/")") else { return nil }
+
+        let matching = userScripts.filter { $0.matches(url: url) }
+        guard !matching.isEmpty else { return nil }
+        guard let assembly = UserScriptRuntime.assemble(
+            scripts: matching, resolvedRequires: resolvedRequires
+        ) else { return nil }
+
+        for missing in assembly.unsupportedGrants {
+            events.emit(.userScriptGrantUnavailable(script: missing.script, grant: missing.grant))
+        }
+        guard !assembly.source.isEmpty else { return nil }
+        events.emit(.userScriptsInjected(host: host, names: matching.map(\.name)))
+        return assembly.source
     }
 
     /// Emits a body whose length and encoding have changed.

@@ -64,6 +64,7 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
 
             // The response side cannot see this head, and eligibility depends on it.
             requestContext.secFetchDest = head.headers.first(name: "Sec-Fetch-Dest")
+            requestContext.path = head.uri
 
             // Ask only for encodings we can decode, so an eligible document never
             // arrives in a form that forces us to skip it.
