@@ -122,6 +122,18 @@ reached which page.
 `--scripts` is what makes a script enabled in the app actually run. The app manages the
 library; it does not yet carry traffic, so the two are joined by hand for now.
 
+### What this Mac looks like before anything is installed
+
+```bash
+swift run --package-path Packages/TamisSystem tamis-preflight
+```
+
+Reports what would get in the way: another proxy already configured, intercepting
+certificate authorities in the keychain, port 53 taken, a VPN carrying the default
+route, or Tamis running from a temporary location. Every check reads — the one
+exception is the port probe, which binds a socket and closes it, because there is no
+read-only way to ask whether a port is free.
+
 ### What Tamis would do with your browsers
 
 ```bash
@@ -197,6 +209,7 @@ root:
 | `TamisLists` | HTTPS exclusions, IDNA, list sources |
 | `TamisApps` | Browser discovery, per-app policy, process attribution |
 | `TamisHistory` | The decision log: schema, batching, retention |
+| `TamisSystem` | Preflight checks, and what installing would change |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
 ## What Tamis will never do
@@ -243,7 +256,8 @@ root:
 | Alerts screen — conditions derived, never stored | done |
 | Settings screen — locations, exclusions audit, allowlist audit | done |
 | Installing: privileged daemon, PAC, port 53, trusted authority | not started |
-| Onboarding, uninstall, conflict detection, app updates | not started |
+| Preflight — conflicts, existing proxy, stale authorities, VPN | done |
+| Onboarding, uninstall, PAC, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |
