@@ -127,7 +127,10 @@ Builds `Tamis.app` and signs it ad hoc — no certificate, no account. The Filte
 browses all 165 lists, downloads what you enable into
 `~/Library/Application Support/Tamis`, and compiles it into the engines. The DNS screen
 runs the resolver on a local port and answers `dig` — nothing on the Mac is
-reconfigured, so the system does not use it yet.
+reconfigured, so the system does not use it yet. The Scripts screen manages
+`~/Library/Application Support/Tamis/Scripts` as an ordinary folder tree.
+
+`TAMIS_STORE` and `TAMIS_SCRIPTS` point those two directories elsewhere.
 
 `TAMIS_STORE=/some/path` points it at a throwaway set of lists instead.
 
@@ -201,6 +204,7 @@ root:
 | Compiling the enabled lists into the engines, in the app | done |
 | Proxy carrying real traffic, on a port, with real lists | done |
 | DNS screen — provider, local resolver, live decisions | done |
+| Scripts screen — filesystem tree, editor, install, revert | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |

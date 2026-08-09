@@ -6,6 +6,7 @@ struct TamisApp: App {
     @State private var lists = FilterListsModel.makeDefault()
     @State private var engines: EngineModel
     @State private var resolver = ResolverModel()
+    @State private var scripts = ScriptsModel.makeDefault()
 
     init() {
         let lists = FilterListsModel.makeDefault()
@@ -22,6 +23,7 @@ struct TamisApp: App {
                 .environment(lists)
                 .environment(engines)
                 .environment(resolver)
+                .environment(scripts)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)
