@@ -10,7 +10,27 @@ import TamisLists
 setvbuf(stdout, nil, _IOLBF, 0)
 
 let set = BundledExclusions.makeSet()
-let hosts = Array(CommandLine.arguments.dropFirst())
+var hosts = Array(CommandLine.arguments.dropFirst())
+
+// The allowlist has to be readable by anyone who wants to check it. A hard-coded,
+// invisible allowlist inside software that intercepts all traffic has the shape of a
+// back door, so it gets a view of its own before the interface exists.
+if hosts.first == "--allowlist" {
+    let allowlist = InternalAllowlist.shared
+    print("Domaines système de Tamis — jamais bloqués, sans exception\n")
+    for purpose in [InternalAllowlist.Entry.Purpose.encryptedDNS, .filterListSource, .appUpdate] {
+        let entries = allowlist.entries(for: purpose)
+        guard !entries.isEmpty else { continue }
+        print("\(purpose.title) (\(entries.count))")
+        for entry in entries {
+            print("  \(entry.host)")
+            print("      \(entry.justification)")
+        }
+        print("")
+    }
+    print("  Total  \(allowlist.entries.count) hôtes")
+    exit(0)
+}
 
 guard hosts.isEmpty else {
     for host in hosts {
