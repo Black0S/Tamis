@@ -51,6 +51,9 @@ public struct Scriptlet: Sendable, Equatable {
         case "aost":  return "abort-on-stack-trace"
         case "no-fetch-if": return "prevent-fetch"
         case "rc":    return "remove-class"
+        case "aeld", "addeventlistener-defuser": return "prevent-addeventlistener"
+        case "nowoif", "no-window-open-if", "window.open-defuser": return "prevent-window-open"
+        case "noeval", "noeval-if", "prevent-eval-if": return "prevent-eval"
         default:      return name
         }
     }

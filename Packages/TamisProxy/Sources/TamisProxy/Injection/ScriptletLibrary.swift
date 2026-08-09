@@ -33,11 +33,76 @@ public enum ScriptletLibrary {
         }
 
         guard !bodies.isEmpty else { return skipped.isEmpty ? nil : ("", skipped) }
-        return ("(function () { \"use strict\";\n" + bodies.joined(separator: "\n") + "\n})();", skipped)
+        return ("(function () { \"use strict\";\n" + preamble + "\n"
+                + bodies.joined(separator: "\n") + "\n})();", skipped)
     }
+
+    /// Shared by the bodies below, so the same needle means the same thing everywhere.
+    ///
+    /// Lists write three forms and mean three different things: an empty needle matches
+    /// anything, `/…/` is a regular expression, and a leading `!` inverts. Getting this
+    /// wrong in one scriptlet and right in another is how a rule silently stops working
+    /// on one site and not the next.
+    static let preamble = #"""
+    function makeMatcher(needle) {
+      if (needle === "" || needle === "*") { return function () { return true; }; }
+      var negated = false;
+      if (needle.charAt(0) === "!") { negated = true; needle = needle.slice(1); }
+      var test;
+      if (needle.length > 1 && needle.charAt(0) === "/" && needle.lastIndexOf("/") > 0) {
+        var end = needle.lastIndexOf("/");
+        try {
+          var expression = new RegExp(needle.slice(1, end), needle.slice(end + 1));
+          test = function (text) { return expression.test(text); };
+        } catch (e) { test = function () { return false; }; }
+      } else {
+        test = function (text) { return text.indexOf(needle) !== -1; };
+      }
+      return negated ? function (text) { return !test(text); } : test;
+    }
+    """#
 
     /// Each body receives `args`, the scriptlet's arguments as an array of strings.
     static let implementations: [String: String] = [
+
+        // Swallowing the registration, not the event: the listener is never added, so
+        // nothing later removes a handler the page believes it installed.
+        "prevent-addeventlistener": #"""
+        var typeMatcher = makeMatcher(args[0] || ""), handlerMatcher = makeMatcher(args[1] || "");
+        var original = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (type, handler) {
+          var text = typeof handler === "function" ? handler.toString() : String(handler);
+          if (typeMatcher(String(type)) && handlerMatcher(text)) { return; }
+          return original.apply(this, arguments);
+        };
+        """#,
+
+        // Returns a usable stub rather than null: pages routinely call methods on the
+        // window they think they opened, and null turns a blocked popup into a crash.
+        "prevent-window-open": #"""
+        var matcher = makeMatcher(args[0] || "");
+        var original = window.open;
+        window.open = function (url) {
+          if (!matcher(String(url === undefined ? "" : url))) {
+            return original.apply(window, arguments);
+          }
+          var noop = function () {};
+          return {
+            closed: true, close: noop, focus: noop, blur: noop,
+            document: { write: noop, writeln: noop, close: noop, open: noop },
+            location: { href: "", replace: noop, assign: noop, reload: noop }
+          };
+        };
+        """#,
+
+        "prevent-eval": #"""
+        var matcher = makeMatcher(args[0] || "");
+        var original = window.eval;
+        window.eval = function (source) {
+          if (matcher(String(source))) { return undefined; }
+          return original.apply(window, arguments);
+        };
+        """#,
 
         // Trapping a property before the page reads it is only possible because the
         // payload is injected ahead of every script the document loads.

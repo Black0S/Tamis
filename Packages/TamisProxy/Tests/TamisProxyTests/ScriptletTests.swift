@@ -163,3 +163,106 @@ struct ScriptletCoverageTests {
         )
     }
 }
+
+/// The four scriptlets added after measuring what the enabled lists actually call.
+///
+/// Executed in JavaScriptCore rather than inspected: a scriptlet that parses and does
+/// nothing is indistinguishable from a working one by reading it, and these run inside
+/// the page where a mistake breaks the site rather than merely failing to block.
+@Suite("Scriptlets that intercept")
+struct InterceptingScriptletTests {
+
+    /// Just enough browser for the scriptlets to have something to intercept.
+    ///
+    /// JavaScriptCore has no DOM: `window`, `document` and `EventTarget` do not exist,
+    /// so a scriptlet that hooks them throws and the payload's own try/catch swallows
+    /// it. That is exactly why the existing test — which only checks that each body
+    /// *parses* — could pass while none of them did anything.
+    private static let domShim = """
+    // `window` is the global object here, so it already carries the real `eval`.
+    // Shimming it would have the shim call itself.
+    var window = this;
+    function EventTarget() {}
+    EventTarget.prototype.addEventListener = function () { this.__added = true; };
+    window.EventTarget = EventTarget;
+    var document = new EventTarget();
+    window.document = document;
+    window.open = function () { return { real: true }; };
+    """
+
+    private func evaluate(_ bodies: [String], then probe: String) throws -> JSValue? {
+        let scriptlets = bodies.compactMap(Scriptlet.parse)
+        let payload = try #require(ScriptletLibrary.script(for: scriptlets)?.source)
+
+        let context = try #require(JSContext())
+        context.evaluateScript(Self.domShim)
+        context.evaluateScript(payload)
+        if let exception = context.exception {
+            Issue.record("le payload ne s'évalue pas : \(exception)")
+        }
+        return context.evaluateScript(probe)
+    }
+
+    /// The registration is swallowed, not the event. Removing the listener later would
+    /// leave the page believing it had installed one.
+    @Test("addEventListener-defuser stops the matching listener being added")
+    func preventAddEventListener() throws {
+        let value = try evaluate(
+            ["aeld, click, badHandler"],
+            then: """
+            var calls = 0;
+            document.addEventListener('click', function badHandler() { calls++; });
+            document.addEventListener('click', function keepMe() { calls += 10; });
+            [typeof document.addEventListener, calls].join(',');
+            """
+        )
+        #expect(value?.toString() == "function,0")
+    }
+
+    /// A stub, not null. Pages routinely call methods on the window they think they
+    /// opened, and null turns a blocked popup into a broken page.
+    @Test("window.open returns a usable stub rather than null")
+    func preventWindowOpen() throws {
+        let value = try evaluate(
+            ["nowoif, /ads/"],
+            then: """
+            var blocked = window.open('https://x.test/ads/1');
+            var allowed = window.open('https://x.test/normal').real;
+            blocked === null ? 'null' : [typeof blocked.close, blocked.closed, allowed].join(',');
+            """
+        )
+        #expect(value?.toString().hasPrefix("function,true") == true)
+    }
+
+    @Test("noeval only swallows the matching source")
+    func preventEval() throws {
+        let value = try evaluate(
+            ["noeval, tracker"],
+            then: """
+            var blocked = window.eval('1 + 1; // tracker');
+            var kept = window.eval('2 + 3');
+            [String(blocked), String(kept)].join(',');
+            """
+        )
+        #expect(value?.toString() == "undefined,5")
+    }
+
+    /// Three forms, three meanings. Getting this right in one scriptlet and wrong in
+    /// another is how a rule stops working on one site and not the next.
+    @Test("The needle understands empty, regex and negation")
+    func matcherForms() throws {
+        // Empty matches everything.
+        let all = try evaluate(
+            ["noeval"],
+            then: "String(window.eval('1 + 1'));"
+        )
+        #expect(all?.toString() == "undefined")
+
+        // A leading ! inverts.
+        let negated = try evaluate(
+            ["noeval, !keep"],
+            then: "[String(window.eval('1 + 1 /* keep */')), String(window.eval('2 + 2'))].join(',');"
+        )
+        #expect(negated?.toString() == "2,undefined")
+    }
+}
