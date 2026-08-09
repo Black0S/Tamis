@@ -29,9 +29,7 @@ struct InstallerTests {
     /// to contain exactly what it claims.
     @Test("The privileged script names every command it will run")
     func scriptIsReadable() {
-        let script = installer().privilegedScript(
-            authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem")
-        )
+        let script = installer().privilegedScript()
         // `bootstrap` takes a domain and a path; `bootout` takes a service target.
         // Getting those the wrong way round produces a command that fails at install
         // time and nowhere earlier.
@@ -48,7 +46,7 @@ struct InstallerTests {
     /// code, e-mail and timestamps, none of which Tamis has any business doing.
     @Test("The authority is trusted only for SSL")
     func authorityScope() {
-        let script = installer().privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let script = installer().privilegedScript()
         #expect(script.contains("-p ssl"))
         #expect(script.contains("-r trustRoot"))
     }
@@ -57,7 +55,7 @@ struct InstallerTests {
     /// containing a quote into a command. They are written by Swift and copied.
     @Test("Property lists are staged, never written from the shell")
     func plistsAreStaged() {
-        let script = installer().privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let script = installer().privilegedScript()
         #expect(script.contains("staging/\(Installation.resolverLabel).plist"))
         #expect(!script.contains("<?xml"), "un plist est construit dans le shell")
         #expect(!script.contains("cat >"), "un fichier est écrit depuis le shell")
@@ -67,7 +65,7 @@ struct InstallerTests {
     /// leaves a machine that still browses normally.
     @Test("The proxy setting is the last thing the script does")
     func proxyLast() throws {
-        let script = installer().privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let script = installer().privilegedScript()
         let proxy = try #require(script.range(of: "networksetup -setautoproxyurl"))
         let certificate = try #require(script.range(of: "security add-trusted-cert"))
         let resolver = try #require(script.range(of: Installation.resolverLabel))
@@ -154,7 +152,7 @@ struct PrivilegedLocationTests {
 
     @Test("The script copies the binaries out and makes them root-owned")
     func scriptCopiesBinaries() {
-        let script = installer.privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let script = installer.privilegedScript()
         let directory = Installation.privilegedDirectory.path(percentEncoded: false)
         #expect(script.contains("cp '/Applications/Tamis.app/Contents/MacOS/tamis-dnsd' '\(directory)/tamis-dnsd'"))
         #expect(script.contains("chown -R root:wheel '\(directory)'"))
@@ -177,11 +175,48 @@ struct PrivilegedLocationTests {
     /// resolve anything.
     @Test("DNS is set on install and cleared on uninstall")
     func dnsIsSetAndCleared() throws {
-        let script = installer.privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let script = installer.privilegedScript()
         #expect(script.contains("networksetup -setdnsservers \"$service\" 127.0.0.1 ::1"))
 
         let proxy = try #require(Installation.plan().first { $0.id == "system-proxy" })
         #expect(proxy.undoCommand.contains("-setdnsservers"))
         #expect(proxy.undoCommand.contains("empty"))
+    }
+}
+
+/// The step order the script depends on, found by walking the flow by hand and
+/// discovering that the button labelled "Installer" advanced without installing.
+@Suite("The script's own ordering")
+struct ScriptOrderingTests {
+
+    private let script = Installer(
+        applicationURL: URL(fileURLWithPath: "/Applications/Tamis.app")
+    ).privilegedScript()
+
+    /// The authority does not exist when the script starts: `tamisd` creates it the
+    /// first time launchd runs it, which happens inside this script. Trusting a file
+    /// before the process that writes it has started would trust nothing.
+    @Test("The daemon starts before the certificate is trusted")
+    func daemonBeforeTrust() throws {
+        let bootstrap = try #require(script.range(of: "launchctl bootstrap system '/Library/LaunchDaemons/\(Installation.daemonLabel).plist'"))
+        let trust = try #require(script.range(of: "security add-trusted-cert"))
+        #expect(bootstrap.lowerBound < trust.lowerBound)
+    }
+
+    /// A service that has been started is not a service that has finished starting.
+    @Test("It waits for the certificate rather than assuming it")
+    func waitsForCertificate() {
+        #expect(script.contains("Authority/ca.der"))
+        #expect(script.contains("sleep 0.5"))
+        // And refuses to continue if it never appears, rather than trusting nothing
+        // and reporting success.
+        #expect(script.contains("l'autorité n'a pas été créée"))
+    }
+
+    /// Nothing hands the app a certificate path any more — that would mean the app had
+    /// generated the authority, which is the arrangement the daemon exists to avoid.
+    @Test("The app supplies no certificate")
+    func appSuppliesNoCertificate() {
+        #expect(!script.contains("ca.pem"))
     }
 }

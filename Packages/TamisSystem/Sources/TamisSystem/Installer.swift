@@ -60,7 +60,14 @@ public struct Installer: Sendable {
     /// Assembled rather than run so it can be displayed before it is authorised. Every
     /// line is a command the user could type; nothing is hidden behind an API call they
     /// cannot inspect.
-    public func privilegedScript(authorityPEM: URL) -> String {
+    /// The authority is not passed in: it does not exist yet.
+    ///
+    /// `tamisd` creates it the first time launchd starts it, which happens inside this
+    /// script. So the script starts the daemon, waits for the certificate to appear,
+    /// and trusts that file. Handing in a path from the app would mean the app had
+    /// generated the authority — which is exactly the arrangement the daemon exists to
+    /// avoid.
+    public func privilegedScript() -> String {
         // The jobs point at the installed copies, never at the bundle.
         let daemon = LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd"))
         let resolver = LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd"))
@@ -85,9 +92,19 @@ public struct Installer: Sendable {
         chmod 644 '\(daemon.plistURL.path(percentEncoded: false))'
         launchctl bootstrap \(daemon.domain) '\(daemon.plistURL.path(percentEncoded: false))'
 
-        # Autorité de certification, marquée de confiance pour SSL uniquement.
+        # Le démon vient de créer l'autorité. On attend qu'elle soit sur le disque
+        # plutôt que de supposer qu'un service lancé est un service prêt.
+        CERT='\(directory)/Authority/ca.der'
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ -s "$CERT" ] && break
+            sleep 0.5
+        done
+        [ -s "$CERT" ] || { echo "l'autorité n'a pas été créée" >&2; exit 1; }
+
+        # Marquée de confiance pour SSL uniquement : une racine bonne pour tout
+        # pourrait signer du code, du courrier et des horodatages.
         security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
-            -p ssl '\(authorityPEM.path(percentEncoded: false))'
+            -p ssl "$CERT"
 
         # Résolveur : launchd ouvre le port 53 et transmet le descripteur.
         cp '\(stagedPlist(for: resolver).path(percentEncoded: false))' '\(resolver.plistURL.path(percentEncoded: false))'

@@ -98,7 +98,7 @@ struct PlanMatchesBuildTests {
     @Test("The privileged script names no binary the bundle does not carry")
     func onlyRealBinaries() {
         let script = Installer(applicationURL: URL(fileURLWithPath: "/Applications/Tamis.app"))
-            .privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+            .privilegedScript()
         // The three the bundle script copies. Anything else would be a path that does
         // not exist on the machine the install runs on.
         let shipped = ["Tamis", "tamisd", "tamis-dnsd", "tamis-pac"]

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import TamisLists
 import TamisSystem
 
 /// Drives the nine screens of the first run.
@@ -65,6 +66,21 @@ final class OnboardingModel {
 
     var changes: [SystemChange] { Installation.plan() }
 
+    /// The script macOS will evaluate for every request, built from the exclusions so
+    /// banking traffic never reaches the proxy at all.
+    private var pacContents: String {
+        ProxyAutoConfig.script(
+            proxyPort: 7654,
+            directHosts: BundledExclusions.sources.flatMap { $0.entries.map(\.pattern) }
+        )
+    }
+
+    /// Called by the button that says "Installer", which is the only button that does.
+    func installNow() async {
+        step = .installing
+        await install(pacContents: pacContents)
+    }
+
     /// The four things Tamis will not do, which the screen shows beside the four it
     /// will. Software that states its limits is more credible than software that states
     /// only its powers — and these are checkable claims, not reassurance.
@@ -100,7 +116,7 @@ final class OnboardingModel {
     // MARK: Doing it
 
     /// The one place the dry run ends.
-    func install(authorityPEM: URL, pacContents: String) async {
+    func install(pacContents: String) async {
         isWorking = true
         failure = nil
         operations = []
@@ -113,7 +129,7 @@ final class OnboardingModel {
             record("Préparation des fichiers de service", try live.stagePlists())
             record("Écriture de la configuration proxy", try live.applyUserChanges(pacContents: pacContents))
 
-            script = live.privilegedScript(authorityPEM: authorityPEM)
+            script = live.privilegedScript()
             try await runPrivileged(script)
             operations.append(Operation(description: "Modifications système appliquées", succeeded: true))
             step = .browsers

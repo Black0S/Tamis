@@ -146,9 +146,7 @@ struct OnboardingView: View {
 
             DisclosureGroup("Voir les commandes exactes") {
                 ScrollView {
-                    Text(model.installer.privilegedScript(
-                        authorityPEM: URL(fileURLWithPath: "…/ca.pem")
-                    ))
+                    Text(model.installer.privilegedScript())
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -164,6 +162,14 @@ struct OnboardingView: View {
     private var installing: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Installation").font(.title2)
+            if model.operations.isEmpty && !model.isWorking && model.failure == nil {
+                // Reached without installing means something skipped the step. Saying
+                // so beats an empty panel that reads as success.
+                Label("Rien n'a été appliqué. Revenez à l'écran précédent et choisissez "
+                      + "« Installer ».", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(model.operations) { operation in
                 Label(
                     operation.description,
@@ -259,14 +265,26 @@ struct OnboardingView: View {
                 Button("Annuler") {
                     Task { await model.cancel(); onFinish() }
                 }
+                .keyboardShortcut(.cancelAction)
             }
             if model.step.rawValue > 0 && model.step != .done {
                 Button("Retour") { model.back() }
             }
             Button(nextTitle) {
-                if model.step == .done { onFinish() } else { model.advance() }
+                switch model.step {
+                case .done:      onFinish()
+                // The button that says "Installer" installs. It used to call the same
+                // `advance()` as every other screen, which walked past the whole
+                // installation without doing any of it — the flow completed and the
+                // machine was untouched.
+                case .authorise: Task { await model.installNow() }
+                default:         model.advance()
+                }
             }
             .buttonStyle(.borderedProminent)
+            // Return moves forward and Escape backs out. Nine screens without a
+            // keyboard is nine screens somebody has to reach for the mouse on.
+            .keyboardShortcut(.defaultAction)
             .disabled(model.step == .preflight && !model.canProceedFromPreflight)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
