@@ -133,9 +133,25 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         // rejected before it can reach a browser, and the runtime stays an interpreter
         // rather than a parser.
         let procedural = set.proceduralSelectors.compactMap(ProceduralSelector.parse)
-        let script = CosmeticRuntime.script(for: procedural)
+        let runtime = CosmeticRuntime.script(for: procedural)
 
-        guard !css.isEmpty || script != nil else {
+        // Scriptlets answer scripts that fight back — an advert loader checking its own
+        // object, a paywall reading a flag. Hiding elements does nothing against those.
+        let parsedScriptlets = set.scriptlets.compactMap(Scriptlet.parse)
+        let scriptletResult = ScriptletLibrary.script(for: parsedScriptlets)
+        if let skipped = scriptletResult?.skipped, !skipped.isEmpty {
+            // Running an approximation of a scriptlet is how a page breaks in a way
+            // nobody can attribute, so unknown names are reported rather than guessed.
+            events.emit(.scriptletsSkipped(host: host, names: skipped))
+        }
+
+        // Scriptlets run first: they exist to be in place before the page's own code.
+        let script = [scriptletResult?.source, runtime]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
+        guard !css.isEmpty || !script.isEmpty else {
             // Nothing to apply to this site. Still emit the decoded body: the head is
             // about to lose its Content-Encoding either way.
             flushDecoded(head: head, body: decoded, trailers: trailers)
@@ -143,7 +159,9 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         }
 
         let nonce = CSPRewriter.makeNonce()
-        let markup = InjectionPayload.markup(css: css, script: script, nonce: nonce)
+        let markup = InjectionPayload.markup(
+            css: css, script: script.isEmpty ? nil : script, nonce: nonce
+        )
 
         var injector = HTMLInjector()
         var state = injector.consume(decoded)

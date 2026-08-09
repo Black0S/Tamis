@@ -147,6 +147,9 @@ public final class EventSink: Sendable {
         /// Eligible but not rewritten, with the reason. Worth surfacing: a page that
         /// silently loses cosmetic filtering looks like a filter-list problem.
         case injectionAbandoned(host: String, reason: String)
+        /// Scriptlets a list asked for that this build does not implement. Surfaced
+        /// because the page keeps working while quietly doing less than the list says.
+        case scriptletsSkipped(host: String, names: [String])
         case requestAllowed(url: String)
         case requestBlocked(url: String, rule: String)
         case failed(host: String, message: String)
