@@ -134,6 +134,15 @@ route, or Tamis running from a temporary location. Every check reads — the one
 exception is the port probe, which binds a socket and closes it, because there is no
 read-only way to ask whether a port is free.
 
+### What installing would change
+
+```bash
+swift run --package-path Packages/TamisSystem tamis-install
+```
+
+Prints every change installing would make, which of them need a password, which are
+already in place, and the exact command that reverses each one. It installs nothing.
+
 ### What Tamis would do with your browsers
 
 ```bash
@@ -258,7 +267,8 @@ root:
 | Installing: privileged daemon, PAC, port 53, trusted authority | not started |
 | Preflight — conflicts, existing proxy, stale authorities, VPN | done |
 | PAC — no dnsResolve, exclusions direct, fail-open | done |
-| Onboarding, uninstall, app updates | not started |
+| Installation plan — what changes, what undoes it | done |
+| Applying the plan, onboarding, uninstall, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |

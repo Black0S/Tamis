@@ -14,6 +14,11 @@ let package = Package(
             dependencies: ["TamisSystem"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .executableTarget(
+            name: "tamis-install",
+            dependencies: ["TamisSystem"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "TamisSystemTests",
             dependencies: ["TamisSystem"],
