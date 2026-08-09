@@ -13,7 +13,7 @@ import Foundation
 /// subjectAltName, so connecting to `https://1.1.1.1/dns-query` validates cleanly with
 /// no name lookup anywhere. A custom server that does not do this needs the bootstrap
 /// path instead (see ``BootstrapResolver``).
-public struct DoHProvider: Sendable, Equatable, Identifiable {
+public struct DoHProvider: Sendable, Equatable, Hashable, Identifiable {
     public var id: String { name }
 
     public let name: String

@@ -28,7 +28,6 @@ final class AppState {
     /// have. Shown so the answer comes from measurement rather than assumption.
     var unfilteredFlows = 0
 
-    var dnsProvider = "Cloudflare"
     var alerts: [Alert] = []
     var recent: [Decision] = []
 

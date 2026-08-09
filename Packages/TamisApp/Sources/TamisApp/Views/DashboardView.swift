@@ -4,6 +4,7 @@ struct DashboardView: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
     @Environment(EngineModel.self) private var engines
+    @Environment(ResolverModel.self) private var resolver
     /// Set by the window, so the empty state can send the user to the Filters screen
     /// instead of describing where it is.
     var onChooseLists: () -> Void = {}
@@ -114,7 +115,14 @@ struct DashboardView: View {
             HStack {
                 Label("Résolveur DNS", systemImage: "globe")
                 Spacer()
-                Text(state.dnsProvider).foregroundStyle(.secondary)
+                // The provider is only half the answer. A name on its own reads as
+                // "this is in use", which it is not until the resolver is running.
+                if let port = resolver.state.port {
+                    Text("\(resolver.provider.name) · 127.0.0.1:\(String(port))")
+                        .foregroundStyle(.secondary).monospacedDigit()
+                } else {
+                    Text("\(resolver.provider.name) · arrêté").foregroundStyle(.secondary)
+                }
             }
             .padding(4)
         }
@@ -173,6 +181,7 @@ struct StatTile: View {
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
         .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
+        .environment(ResolverModel())
         .frame(width: 820, height: 600)
 }
 
@@ -181,5 +190,6 @@ struct StatTile: View {
         .environment(AppState())
         .environment(FilterListsModel.makeDefault())
         .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
+        .environment(ResolverModel())
         .frame(width: 820, height: 600)
 }

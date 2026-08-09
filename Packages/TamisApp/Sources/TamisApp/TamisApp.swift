@@ -5,6 +5,7 @@ struct TamisApp: App {
     @State private var state = AppState()
     @State private var lists = FilterListsModel.makeDefault()
     @State private var engines: EngineModel
+    @State private var resolver = ResolverModel()
 
     init() {
         let lists = FilterListsModel.makeDefault()
@@ -20,6 +21,7 @@ struct TamisApp: App {
                 .environment(state)
                 .environment(lists)
                 .environment(engines)
+                .environment(resolver)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)
@@ -36,6 +38,7 @@ struct TamisApp: App {
                 .environment(state)
                 .environment(lists)
                 .environment(engines)
+                .environment(resolver)
         } label: {
             Image(systemName: state.protection.symbolName)
         }

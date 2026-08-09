@@ -125,8 +125,9 @@ Scripts/bundle-app.sh && open build/Tamis.app
 
 Builds `Tamis.app` and signs it ad hoc — no certificate, no account. The Filters screen
 browses all 165 lists, downloads what you enable into
-`~/Library/Application Support/Tamis`, and compiles it into the engines — the dashboard
-reports what came out. Nothing carries live traffic yet.
+`~/Library/Application Support/Tamis`, and compiles it into the engines. The DNS screen
+runs the resolver on a local port and answers `dig` — nothing on the Mac is
+reconfigured, so the system does not use it yet.
 
 `TAMIS_STORE=/some/path` points it at a throwaway set of lists instead.
 
@@ -198,6 +199,7 @@ root:
 | Filters screen — browse, enable, refresh, add by URL | done |
 | Compiling the enabled lists into the engines, in the app | done |
 | Proxy carrying real traffic, on a port, with real lists | done |
+| DNS screen — provider, local resolver, live decisions | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |

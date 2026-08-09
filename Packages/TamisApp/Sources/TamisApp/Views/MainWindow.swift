@@ -67,6 +67,7 @@ struct MainWindow: View {
             switch selection {
             case .dashboard, .none: DashboardView(onChooseLists: { selection = .filters })
             case .filters:          FiltersView()
+            case .dns:              DNSView()
             case .some(let section): PlaceholderView(section: section)
             }
         }
@@ -109,5 +110,6 @@ struct PlaceholderView: View {
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
         .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
+        .environment(ResolverModel())
         .frame(width: 1000, height: 680)
 }

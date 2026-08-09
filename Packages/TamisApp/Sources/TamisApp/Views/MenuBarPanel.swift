@@ -7,6 +7,7 @@ import SwiftUI
 struct MenuBarPanel: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
+    @Environment(ResolverModel.self) private var resolver
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -76,7 +77,9 @@ struct MenuBarPanel: View {
         HStack {
             Label("DNS", systemImage: "globe")
             Spacer()
-            Text(state.dnsProvider).foregroundStyle(.secondary)
+            Text(resolver.state.isRunning ? resolver.provider.name
+                                          : "\(resolver.provider.name) · arrêté")
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -125,10 +128,12 @@ private struct MenuRowLabelStyle: LabelStyle {
     MenuBarPanel()
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
+        .environment(ResolverModel())
 }
 
 #Preview("Premier lancement") {
     MenuBarPanel()
         .environment(AppState())
         .environment(FilterListsModel.makeDefault())
+        .environment(ResolverModel())
 }

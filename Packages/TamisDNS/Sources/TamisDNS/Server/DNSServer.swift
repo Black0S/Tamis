@@ -21,6 +21,8 @@ public actor DNSServer {
         public var forwarded = 0
         public var upstreamFailures = 0
         public var malformed = 0
+
+        public init() {}
     }
 
     /// A DNS datagram over UDP cannot exceed 64 KiB even with EDNS0.
