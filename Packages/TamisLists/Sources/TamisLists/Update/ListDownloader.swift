@@ -1,22 +1,41 @@
 import Foundation
 
+/// One fetch, whether it came from the network or from a stub in a test.
+public struct ListPayload: Sendable {
+    public let statusCode: Int
+    public let contentLength: Int?
+    public let bytes: Int
+    public let text: String
+    public let etag: String?
+    public let lastModified: String?
+
+    /// 304: the copy on disk is current, and nothing was transferred.
+    public var isUnchanged: Bool { statusCode == 304 }
+
+    public init(
+        statusCode: Int, contentLength: Int?, bytes: Int, text: String,
+        etag: String?, lastModified: String?
+    ) {
+        self.statusCode = statusCode
+        self.contentLength = contentLength
+        self.bytes = bytes
+        self.text = text
+        self.etag = etag
+        self.lastModified = lastModified
+    }
+}
+
+/// What ``ListManager`` needs from the network, so it can be driven without one.
+public protocol ListFetching: Sendable {
+    func fetch(_ url: URL, etag: String?, lastModified: String?) async throws -> ListPayload
+}
+
 /// Fetches a list, and nothing else.
 ///
 /// Tamis's own traffic goes neither through its proxy nor through its filters. A
 /// resolver that resolves through itself, or a downloader that downloads through the
 /// thing it is updating, produces failures that look like network problems and are not.
-public struct ListDownloader: Sendable {
-
-    public struct Response: Sendable {
-        public let statusCode: Int
-        public let contentLength: Int?
-        public let bytes: Int
-        public let text: String
-        public let etag: String?
-        public let lastModified: String?
-        /// 304: the copy on disk is current, and nothing was transferred.
-        public var isUnchanged: Bool { statusCode == 304 }
-    }
+public struct ListDownloader: ListFetching, Sendable {
 
     public enum Failure: Error, Sendable, Equatable {
         case notHTTP
@@ -54,7 +73,7 @@ public struct ListDownloader: Sendable {
         _ url: URL,
         etag: String? = nil,
         lastModified: String? = nil
-    ) async throws -> Response {
+    ) async throws -> ListPayload {
         var request = URLRequest(url: url)
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         if let lastModified {
@@ -71,7 +90,7 @@ public struct ListDownloader: Sendable {
         guard let http = response as? HTTPURLResponse else { throw Failure.notHTTP }
 
         if http.statusCode == 304 {
-            return Response(
+            return ListPayload(
                 statusCode: 304, contentLength: 0, bytes: 0, text: "",
                 etag: etag, lastModified: lastModified
             )
@@ -85,7 +104,7 @@ public struct ListDownloader: Sendable {
         // truncation — it is the server declining to say. The guard treats nil as
         // "no promise made" rather than as a mismatch.
         let declared = http.expectedContentLength
-        return Response(
+        return ListPayload(
             statusCode: http.statusCode,
             contentLength: declared >= 0 ? Int(declared) : nil,
             bytes: data.count,

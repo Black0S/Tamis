@@ -86,6 +86,17 @@ swift run --package-path Packages/TamisLists tamis-exclusions --check-updates
 `--check-updates` runs the whole update chain against the live upstreams — download,
 guardrails, diff, verdict — and writes nothing.
 
+### The whole list chain
+
+```bash
+swift run --package-path Packages/TamisLists tamis-lists --root /tmp/tamis --suggested --compile
+```
+
+Subscribes to the suggested selection, downloads it for real, then compiles what arrived
+into both engines and checks that three advertising hosts are blocked and nine ordinary
+sites are not. The second half is the half that matters: an engine that blocks
+everything passes the first.
+
 ### The application
 
 ```bash
@@ -160,7 +171,8 @@ root:
 | HTTPS exclusions — embedded, locked, wired into the proxy | done |
 | Blocklist catalogue — 165 lists, embedded, nothing downloaded | done |
 | List downloading, update guardrails, diffs, rollback | done |
-| Wiring lists into the engine and the interface | not started |
+| Subscriptions, refresh, compiling into both engines | done |
+| Wiring the lists into the interface | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |

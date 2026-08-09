@@ -225,3 +225,62 @@ struct FilterEngineTests {
         #expect(engine.stats.networkRules == 0)
     }
 }
+
+/// Modifiers that rewrite a request or a response instead of cancelling it.
+///
+/// Found by running the engine against the lists people actually subscribe to rather
+/// than against fixtures: EasyList carries `*$permissions=…`, whose pattern is `*`, and
+/// reading that as a block blocks the entire web.
+@Suite("Rules that change rather than block")
+struct ChangingRuleTests {
+
+    @Test("A whole-web $permissions rule blocks nothing", arguments: [
+        "*$permissions=compute-pressure=(),from=~localhost|~127.0.0.1",
+        "$csp=script-src 'self',domain=example.org",
+        "||tracker.example^$removeparam=fbclid",
+        "||api.example^$replace=/foo/bar/",
+        "||cdn.example^$urltransform=/a/b/",
+        "||ads.example^$redirect-rule=noopjs",
+        "||ads.example^$header=set-cookie:foo",
+    ])
+    func doesNotBlock(rule: String) {
+        let engine = FilterEngine(rules: rule)
+        let request = Request(url: "https://ads.example/track.js", hostname: "ads.example",
+                              sourceHostname: "news.example", type: .script)
+        #expect(engine.match(request).action == .allow)
+        #expect(engine.stats.rulesThatChangeRatherThanBlock == 1)
+        #expect(engine.stats.networkRules == 0)
+    }
+
+    /// `$redirect` is a block: it cancels the request and substitutes a resource.
+    @Test("$redirect still blocks")
+    func redirectBlocks() {
+        let engine = FilterEngine(rules: "||ads.example^$redirect=noopjs,script")
+        let request = Request(url: "https://ads.example/track.js", hostname: "ads.example",
+                              sourceHostname: "news.example", type: .script)
+        #expect(engine.match(request).action == .block)
+    }
+
+    /// An exception carrying one of these modifiers cancels that action, not blocking.
+    /// Keeping it as a network exception would unblock the host outright — the same
+    /// mistake in the opposite direction.
+    @Test("An exception with $csp does not allow-list the host")
+    func cspExceptionDoesNotAllowList() {
+        let engine = FilterEngine(rules: """
+        ||ads.example^
+        @@||ads.example^$csp
+        """)
+        let request = Request(url: "https://ads.example/track.js", hostname: "ads.example",
+                              sourceHostname: "news.example", type: .script)
+        #expect(engine.match(request).action == .block)
+    }
+
+    @Test("Ordinary rules are untouched")
+    func ordinaryRulesSurvive() {
+        let engine = FilterEngine(rules: "||ads.example^")
+        let request = Request(url: "https://ads.example/track.js", hostname: "ads.example",
+                              sourceHostname: "news.example", type: .script)
+        #expect(engine.match(request).action == .block)
+        #expect(engine.stats.rulesThatChangeRatherThanBlock == 0)
+    }
+}

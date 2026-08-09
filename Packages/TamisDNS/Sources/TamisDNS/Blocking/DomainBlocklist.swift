@@ -168,6 +168,14 @@ public struct DomainBlocklist: Sendable {
 
     /// Recognises the three shapes that make up real DNS lists.
     static func parse(_ line: String) -> Entry {
+        // A cosmetic rule has to be recognised *before* the comment is stripped, and
+        // getting that order wrong is not a small mistake. `lemonde.fr##.dfp__container`
+        // hides one element on one newspaper; cut at the first `#` and it becomes a
+        // bare domain, which reads as a DNS block of the whole site. EasyList carries
+        // fifteen thousand of these, so the order below decides between an ad blocker
+        // and an outage.
+        if isCosmeticRule(line) { return .notApplicable }
+
         // Strip an inline comment, which hosts files use freely.
         let withoutComment = line.split(separator: "#", maxSplits: 1).first.map(String.init) ?? line
         let text = withoutComment.trimmingCharacters(in: .whitespaces)
@@ -319,9 +327,38 @@ public struct DomainBlocklist: Sendable {
         return pi == p.count
     }
 
+    /// Whether a line is a cosmetic rule rather than anything a resolver can act on.
+    ///
+    /// The separator is a `#` followed by one of `#@?$%`, with a domain in front of it:
+    /// `##`, `#@#`, `#?#`, `#$#`, `#%#` and their exception forms. A hosts-file comment
+    /// (`0.0.0.0 host # note`) is a `#` followed by an ordinary character, and a
+    /// full-line comment starts at position zero, so neither is caught here.
+    ///
+    /// `$$` and `$@$` — AdGuard's HTML filtering — carry no `#` at all, and are refused
+    /// downstream by ``plainDomain``, which allows no character a host name cannot have.
+    static func isCosmeticRule(_ line: String) -> Bool {
+        var index = line.startIndex
+        while let hash = line[index...].firstIndex(of: "#") {
+            guard hash > line.startIndex else { return false }   // a full-line comment
+            let next = line.index(after: hash)
+            guard next < line.endIndex else { return false }
+            if "#@?$%".contains(line[next]) { return true }
+            index = next
+        }
+        return false
+    }
+
     static func plainDomain(_ text: String) -> String? {
         let domain = text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         guard !domain.isEmpty, domain.count <= 253 else { return nil }
+        // Nothing that cannot appear in a host name. Filter syntax leaks in through
+        // more shapes than are worth enumerating one at a time — `$$`, `[]`, `^`, `|` —
+        // and every one of them, read as a domain, is either inert or an outage.
+        // Non-ASCII passes: hosts files do carry internationalised names.
+        guard !domain.unicodeScalars.contains(where: { scalar in
+            scalar.isASCII && !(scalar.properties.isAlphabetic || ("0"..."9").contains(scalar)
+                                || scalar == "." || scalar == "-" || scalar == "_")
+        }) else { return nil }
         // `localhost` and friends appear at the top of every hosts file and must not
         // become blocking rules.
         if domain == "localhost" || domain == "localhost.localdomain"

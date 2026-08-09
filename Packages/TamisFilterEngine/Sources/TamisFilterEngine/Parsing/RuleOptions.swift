@@ -49,6 +49,27 @@ public struct RuleOptions: Sendable, Equatable {
     /// guessed — the spec calls for counting what we skip, not pretending it is zero.
     public var unsupported: [String] = []
 
+    /// Whether this rule answers the question "does this request happen?" at all.
+    ///
+    /// Most of the action modifiers do not. `$csp`, `$permissions`, `$removeparam`,
+    /// `$replace` and `$urltransform` alter the request or the response and let it
+    /// through; `$redirect-rule` acts only when some *other* rule blocks. Matching them
+    /// as blocks is not a small error — EasyList carries
+    /// `*$permissions=compute-pressure=(),from=~localhost|…`, whose pattern is `*`, and
+    /// reading that as a block stops the entire web.
+    ///
+    /// `$header` genuinely blocks, but on a condition read from the response, which is
+    /// not available when the request is decided. Applying it anyway would widen it
+    /// from "block when this header is present" to "block always" — the same reasoning
+    /// that drops rules with unrecognised modifiers.
+    ///
+    /// `$redirect` is deliberately absent: it blocks the request and substitutes a
+    /// resource, so it is a block.
+    public var changesRatherThanBlocks: Bool {
+        csp != nil || permissions != nil || removeParam != nil || replace != nil
+            || urlTransform != nil || redirectRule != nil || header != nil
+    }
+
     public init() {}
 }
 

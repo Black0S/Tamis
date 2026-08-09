@@ -30,6 +30,10 @@ public struct BuildStats: Sendable, Equatable {
     public var parseErrors = 0
     /// Rules carrying at least one modifier the parser does not know.
     public var rulesWithUnsupportedModifiers = 0
+    /// Rules understood in full that still do not decide whether a request happens —
+    /// `$csp`, `$permissions`, `$removeparam` and the rest. Counted apart from the
+    /// unsupported ones because these are not a gap: they are handled elsewhere.
+    public var rulesThatChangeRatherThanBlock = 0
     /// Rules that landed in the always-checked bucket, block and allow combined.
     public var unindexedRules = 0
     /// Rules backed by `NSRegularExpression`.
@@ -85,6 +89,14 @@ public struct FilterEngine: Sendable {
                 // `://ads.`. Dropping the rule loses a block; keeping it breaks sites.
                 if !rule.options.unsupported.isEmpty {
                     stats.rulesWithUnsupportedModifiers += 1
+                    continue
+                }
+                // Understood, and still not a block. See
+                // ``RuleOptions/changesRatherThanBlocks``: these rewrite the request or
+                // the response and let it through. They belong to the layer that
+                // rewrites headers, not to the one that decides.
+                if rule.options.changesRatherThanBlocks {
+                    stats.rulesThatChangeRatherThanBlock += 1
                     continue
                 }
                 parsed.append(rule)

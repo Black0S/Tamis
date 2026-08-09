@@ -230,3 +230,69 @@ struct ResolverPolicyTests {
         #expect(policy.outcome(forName: "use-application-dns.net") == .forward)
     }
 }
+
+/// Cosmetic rules, which share the `#` that hosts files use for comments.
+///
+/// Found by loading EasyList into the resolver and querying a newspaper: cutting the
+/// line at the first `#` turned `lemonde.fr##.dfp__container` into a bare domain, and a
+/// bare domain reads as a block of the whole site. EasyList carries fifteen thousand
+/// domain-scoped cosmetic rules, so this was not one site.
+@Suite("Cosmetic rules are not DNS rules")
+struct CosmeticNotDNSTests {
+
+    @Test("A cosmetic rule blocks no name", arguments: [
+        "lemonde.fr##.dfp__container",
+        "lemonde.fr#@#.gdpr-lmd-wall",
+        "example.org#?#div:has(> .ad)",
+        "example.org#$#body { overflow: auto !important; }",
+        "example.org#%#//scriptlet('abort-on-property-read', 'foo')",
+        "example.org#@$#body { }",
+        "example.org$$script[data-ad]",
+    ])
+    func cosmeticRulesAreInert(rule: String) {
+        let blocklist = DomainBlocklist(lines: [rule])
+        #expect(blocklist.decision(for: "example.org") == .noMatch)
+        #expect(blocklist.decision(for: "www.lemonde.fr") == .noMatch)
+        #expect(blocklist.count == 0)
+    }
+
+    /// The `#` that made the mistake possible still has to work for what it is for.
+    @Test("Hosts-file comments still behave")
+    func hostsCommentsStillWork() {
+        let blocklist = DomainBlocklist(lines: [
+            "# a full-line comment",
+            "0.0.0.0 tracker.example # inline note",
+            "0.0.0.0 other.example",
+        ])
+        #expect(blocklist.decision(for: "tracker.example") == .block(matched: "tracker.example"))
+        #expect(blocklist.decision(for: "other.example") == .block(matched: "other.example"))
+        #expect(blocklist.count == 2)
+    }
+
+    @Test("A real cosmetic rule and a real block can share a list")
+    func mixedList() {
+        let blocklist = DomainBlocklist(lines: [
+            "lemonde.fr##.dfp__container",
+            "||buf.lemonde.fr^",
+        ])
+        #expect(blocklist.decision(for: "www.lemonde.fr") == .noMatch)
+        #expect(blocklist.decision(for: "buf.lemonde.fr") == .block(matched: "buf.lemonde.fr"))
+    }
+
+    /// Filter syntax leaks in through more shapes than are worth enumerating, so the
+    /// last check is on the characters themselves.
+    @Test("Nothing that cannot be a host name becomes one", arguments: [
+        "example.com$$script", "example.com^", "|example.com|", "exa[m]ple.com",
+        "example.com?x=1", "-banner-ads.",
+    ])
+    func nonHostShapesRefused(line: String) {
+        #expect(DomainBlocklist(lines: [line]).count == 0)
+    }
+
+    /// Hosts files do carry internationalised names, and they are not filter syntax.
+    @Test("An internationalised hosts entry survives")
+    func unicodeHostsEntry() {
+        let blocklist = DomainBlocklist(lines: ["0.0.0.0 bücher.example"])
+        #expect(blocklist.count == 1)
+    }
+}
