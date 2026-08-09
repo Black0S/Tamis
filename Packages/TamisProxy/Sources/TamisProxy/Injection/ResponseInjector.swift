@@ -126,7 +126,13 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
 
         let set = cosmetic.set(forHostname: host)
         let css = set.inlineCSS()
-        guard !css.isEmpty else {
+        // Procedural selectors are parsed here, not in the page: a malformed rule is
+        // rejected before it can reach a browser, and the runtime stays an interpreter
+        // rather than a parser.
+        let procedural = set.proceduralSelectors.compactMap(ProceduralSelector.parse)
+        let script = CosmeticRuntime.script(for: procedural)
+
+        guard !css.isEmpty || script != nil else {
             // Nothing to apply to this site. Still emit the decoded body: the head is
             // about to lose its Content-Encoding either way.
             flushDecoded(head: head, body: decoded, trailers: trailers)
@@ -134,7 +140,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         }
 
         let nonce = CSPRewriter.makeNonce()
-        let markup = InjectionPayload.markup(css: css, script: nil, nonce: nonce)
+        let markup = InjectionPayload.markup(css: css, script: script, nonce: nonce)
 
         var injector = HTMLInjector()
         var state = injector.consume(decoded)
@@ -154,7 +160,11 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         CSPRewriter.authorise(headers: &headers, nonce: nonce)
         var newHead = head
         newHead.headers = headers
-        events.emit(.injected(host: host, selectors: set.specificSelectors.count, bytes: markup.utf8.count))
+        events.emit(.injected(
+            host: host,
+            selectors: set.specificSelectors.count + procedural.count,
+            bytes: markup.utf8.count
+        ))
         flushDecoded(head: newHead, body: rewritten, trailers: trailers)
     }
 

@@ -223,6 +223,45 @@ struct CosmeticEndToEndTests {
         }
     }
 
+    /// A stylesheet cannot express "the element containing this text", so roughly six
+    /// hundred EasyList rules do nothing without this script.
+    @Test("procedural rules arrive as a runtime script")
+    func proceduralRuntimeIsInjected() async throws {
+        try await run(cosmetic: CosmeticEngine(rules: "localhost##.ad-banner:has-text(publicité)")) { page, events in
+            #expect(page.contains("<script nonce="))
+            #expect(page.contains("MutationObserver"))
+            // The rules travel as data; the page never parses a selector.
+            #expect(page.contains("\"t\",\"publicité\""))
+            // No plain stylesheet, because the selector is not expressible in CSS.
+            #expect(!page.contains("<style nonce="))
+
+            let injected = events.contains { if case .injected = $0 { return true }; return false }
+            #expect(injected, "events: \(events)")
+        }
+    }
+
+    @Test("the script is authorised by the same nonce as the stylesheet")
+    func scriptShareTheNonce() async throws {
+        try await run(
+            cosmetic: CosmeticEngine(rules: """
+            localhost##.ad-banner
+            localhost##.promo:has-text(x)
+            """),
+            originHeaders: [("Content-Security-Policy", "script-src 'self'; style-src 'self'")],
+            curlExtra: ["-D", "-"]
+        ) { page, _ in
+            let nonce = try #require(
+                page.range(of: "<style nonce=\"").map { range -> String in
+                    let start = range.upperBound
+                    let end = page[start...].firstIndex(of: "\"") ?? start
+                    return String(page[start..<end])
+                }
+            )
+            #expect(page.contains("<script nonce=\"\(nonce)\""))
+            #expect(page.contains("'nonce-\(nonce)'"))
+        }
+    }
+
     @Test("a site with no matching rule is served byte for byte")
     func noRuleNoChange() async throws {
         try await run(cosmetic: CosmeticEngine(rules: "other.example##.ad-banner")) { page, _ in
