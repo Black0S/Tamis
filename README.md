@@ -100,6 +100,23 @@ into both engines and checks that three advertising hosts are blocked and nine o
 sites are not. The second half is the half that matters: an engine that blocks
 everything passes the first.
 
+### Real traffic through the real engines
+
+```bash
+swift run -c release --package-path Packages/TamisProxy tamis-proxy --root /tmp/tamis --port 18080
+```
+
+Starts the proxy on a port with whatever lists are in that store, and writes its
+certificate authority next to them. From another terminal — no system proxy setting, no
+keychain, no root:
+
+```bash
+curl -x http://127.0.0.1:18080 --cacert /tmp/tamis/ca.pem https://example.com/
+```
+
+It logs every decision: intercepted, blocked and by which rule, tunnelled and by which
+exclusion list.
+
 ### The application
 
 ```bash
@@ -180,7 +197,8 @@ root:
 | Subscriptions, refresh, compiling into both engines | done |
 | Filters screen — browse, enable, refresh, add by URL | done |
 | Compiling the enabled lists into the engines, in the app | done |
-| Connecting the engines to live traffic | not started |
+| Proxy carrying real traffic, on a port, with real lists | done |
+| Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |
