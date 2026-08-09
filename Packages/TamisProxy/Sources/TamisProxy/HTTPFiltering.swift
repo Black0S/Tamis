@@ -15,17 +15,25 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
     private let host: String
     private let upstream: Channel
     private let events: EventSink
+    private let requestContext: RequestContext
 
     /// Set on `.head` and consulted on `.body`/`.end`: once a request is refused, its
     /// body must be swallowed rather than forwarded to an origin that will never see
     /// the head it belongs to.
     private var isBlocked = false
 
-    init(engine: FilterEngine, host: String, upstream: Channel, events: EventSink) {
+    init(
+        engine: FilterEngine,
+        host: String,
+        upstream: Channel,
+        events: EventSink,
+        requestContext: RequestContext
+    ) {
         self.engine = engine
         self.host = host
         self.upstream = upstream
         self.events = events
+        self.requestContext = requestContext
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -43,7 +51,15 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
 
             isBlocked = false
             events.emit(.requestAllowed(url: request.url))
-            upstream.write(HTTPClientRequestPart.head(head), promise: nil)
+
+            // The response side cannot see this head, and eligibility depends on it.
+            requestContext.secFetchDest = head.headers.first(name: "Sec-Fetch-Dest")
+
+            // Ask only for encodings we can decode, so an eligible document never
+            // arrives in a form that forces us to skip it.
+            var forwarded = head
+            ResponseEligibility.rewriteAcceptEncoding(&forwarded.headers)
+            upstream.write(HTTPClientRequestPart.head(forwarded), promise: nil)
 
         case .body(let buffer):
             guard !isBlocked else { return }
@@ -116,37 +132,5 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
         context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
             if !keepAlive { context.close(promise: nil) }
         }
-    }
-}
-
-/// Carries the origin's response back to the client.
-///
-/// The two sides are parsed separately rather than relayed as bytes, so the response
-/// is a structure the injection layer will be able to work on later without another
-/// round of parsing.
-final class UpstreamResponseHandler: ChannelInboundHandler {
-    typealias InboundIn = HTTPClientResponsePart
-    typealias OutboundOut = HTTPClientRequestPart
-
-    private let client: Channel
-
-    init(client: Channel) {
-        self.client = client
-    }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        switch unwrapInboundIn(data) {
-        case .head(let head):
-            client.write(HTTPServerResponsePart.head(head), promise: nil)
-        case .body(let buffer):
-            client.write(HTTPServerResponsePart.body(.byteBuffer(buffer)), promise: nil)
-        case .end(let trailers):
-            client.writeAndFlush(HTTPServerResponsePart.end(trailers), promise: nil)
-        }
-    }
-
-    func channelInactive(context: ChannelHandlerContext) {
-        client.close(promise: nil)
-        context.fireChannelInactive()
     }
 }

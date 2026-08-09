@@ -179,6 +179,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let group: EventLoopGroup
     private let events: EventSink
     private let engine: FilterEngine?
+    private let cosmetic: CosmeticEngine?
+    private let requestContext = RequestContext()
     private let onPinningDetected: @Sendable (String) -> Void
 
     private var upstream: Channel?
@@ -194,6 +196,7 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         group: EventLoopGroup,
         events: EventSink,
         engine: FilterEngine?,
+        cosmetic: CosmeticEngine?,
         onPinningDetected: @escaping @Sendable (String) -> Void
     ) {
         self.target = target
@@ -201,6 +204,7 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.group = group
         self.events = events
         self.engine = engine
+        self.cosmetic = cosmetic
         self.onPinningDetected = onPinningDetected
     }
 
@@ -254,6 +258,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         // No engine loaded is the first-launch state: traffic is parsed and forwarded,
         // nothing matches — precisely what "no list chosen yet" should do.
         let engineOrEmpty = self.engine ?? FilterEngine(rules: "")
+        let cosmetic = self.cosmetic
+        let requestContext = self.requestContext
 
         let verificationOutcome = NIOLockedValueBox<SystemTrustVerifier.Result?>(nil)
 
@@ -281,7 +287,10 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                         ),
                         HTTPRequestEncoder(),
                         ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
-                        UpstreamResponseHandler(client: client),
+                        ResponseInjectingHandler(
+                            client: client, host: host, cosmetic: cosmetic,
+                            context: requestContext, events: events
+                        ),
                     ])
                 } catch {
                     return upstream.eventLoop.makeFailedFuture(error)
@@ -309,7 +318,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                         HTTPResponseEncoder(),
                         ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
                         HTTPFilteringHandler(
-                            engine: engineOrEmpty, host: host, upstream: upstream, events: events
+                            engine: engineOrEmpty, host: host, upstream: upstream,
+                            events: events, requestContext: requestContext
                         ),
                     ]).whenComplete { _ in
                         self.ready = true

@@ -30,19 +30,24 @@ public final class ProxyServer: Sendable {
         /// is exactly the first-launch state, since no blocklist is loaded until the
         /// user chooses one.
         public var engine: FilterEngine?
+        /// Absent means requests are still filtered but nothing is hidden — blocked
+        /// adverts leave their holes open.
+        public var cosmetic: CosmeticEngine?
 
         public init(
             host: String = "127.0.0.1",
             port: Int = 0,
             policy: InterceptionPolicy = .init(),
             interception: TLSInterception.Materials? = nil,
-            engine: FilterEngine? = nil
+            engine: FilterEngine? = nil,
+            cosmetic: CosmeticEngine? = nil
         ) {
             self.host = host
             self.port = port
             self.policy = policy
             self.interception = interception
             self.engine = engine
+            self.cosmetic = cosmetic
         }
     }
 
@@ -100,7 +105,8 @@ public final class ProxyServer: Sendable {
                     ConnectHandler(
                         policy: configuration.policy, group: group, events: events,
                         interception: configuration.interception,
-                        engine: configuration.engine, learn: learn
+                        engine: configuration.engine,
+                        cosmetic: configuration.cosmetic, learn: learn
                     ),
                 ])
             }
@@ -137,6 +143,10 @@ public final class EventSink: Sendable {
         /// The origin's own certificate did not validate. A security finding, never
         /// answered by falling back to a tunnel.
         case upstreamCertificateRejected(host: String, reason: String, isNameMismatch: Bool)
+        case injected(host: String, selectors: Int, bytes: Int)
+        /// Eligible but not rewritten, with the reason. Worth surfacing: a page that
+        /// silently loses cosmetic filtering looks like a filter-list problem.
+        case injectionAbandoned(host: String, reason: String)
         case requestAllowed(url: String)
         case requestBlocked(url: String, rule: String)
         case failed(host: String, message: String)
@@ -169,6 +179,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let events: EventSink
     private let interception: TLSInterception.Materials?
     private let engine: FilterEngine?
+    private let cosmetic: CosmeticEngine?
     private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
     private var mode: Mode = .tunnel
@@ -181,6 +192,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         events: EventSink,
         interception: TLSInterception.Materials?,
         engine: FilterEngine?,
+        cosmetic: CosmeticEngine?,
         learn: @escaping @Sendable (String) -> Void
     ) {
         self.policy = policy
@@ -188,6 +200,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.events = events
         self.interception = interception
         self.engine = engine
+        self.cosmetic = cosmetic
         self.learn = learn
     }
 
@@ -307,6 +320,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         let group = self.group
         let learn = self.learn
         let engine = self.engine
+        let cosmetic = self.cosmetic
 
         var headers = HTTPHeaders()
         headers.add(name: "Content-Length", value: "0")
@@ -330,7 +344,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                                 NIOSSLServerHandler(context: sslContext),
                                 InterceptHandler(
                                     target: target, materials: materials, group: group,
-                                    events: events, engine: engine, onPinningDetected: learn
+                                    events: events, engine: engine, cosmetic: cosmetic,
+                                    onPinningDetected: learn
                                 ),
                             ])
                         } catch {
