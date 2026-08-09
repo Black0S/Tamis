@@ -31,10 +31,13 @@ public struct CosmeticSet: Sendable, Equatable {
     /// element from layout, which is what closes the hole a blocked advert leaves, and
     /// `!important` survives the inline styles ad frames set on themselves.
     public func inlineCSS() -> String {
-        guard !specificSelectors.isEmpty || !styleRules.isEmpty else { return "" }
+        // Generic selectors are included only because the caller narrowed them to what
+        // the document can actually match; unnarrowed they would be 216 KB per page.
+        let hiding = specificSelectors + genericSelectors
+        guard !hiding.isEmpty || !styleRules.isEmpty else { return "" }
         var css = ""
-        if !specificSelectors.isEmpty {
-            css += specificSelectors.joined(separator: ",\n") + " { display: none !important; }\n"
+        if !hiding.isEmpty {
+            css += hiding.joined(separator: ",\n") + " { display: none !important; }\n"
         }
         css += styleRules.joined(separator: "\n")
         return css
@@ -54,6 +57,15 @@ public struct CosmeticEngine: Sendable {
         public var htmlFilters = 0
     }
 
+    /// Generic rules indexed by the class or id their selector leads with.
+    ///
+    /// Real lists carry over thirteen thousand of these, 216 KB of stylesheet if
+    /// inlined into every page. Indexing them by token means a page receives only the
+    /// handful that could possibly match the markup it actually contains.
+    private var genericIndex: [String: [CosmeticRule]] = [:]
+    /// Generic rules with no leading class or id — attribute selectors, bare tags.
+    /// Few enough to always apply.
+    private var genericUnkeyed: [CosmeticRule] = []
     private var genericRules: [CosmeticRule] = []
     /// Indexed by domain so a page consults a handful of rules, not all of them.
     private var specificRules: [String: [CosmeticRule]] = [:]
@@ -78,6 +90,12 @@ public struct CosmeticEngine: Sendable {
 
             if rule.includedDomains.isEmpty {
                 genericRules.append(rule)
+                if rule.kind == .hide, !rule.isProcedural,
+                   let token = Self.primaryToken(of: rule.body) {
+                    genericIndex[token, default: []].append(rule)
+                } else {
+                    genericUnkeyed.append(rule)
+                }
                 stats.generic += 1
             } else {
                 for domain in rule.includedDomains {
@@ -93,7 +111,12 @@ public struct CosmeticEngine: Sendable {
     }
 
     /// Everything that applies to a page served from `hostname`.
-    public func set(forHostname hostname: String) -> CosmeticSet {
+    ///
+    /// - Parameter documentTokens: class and id names present in the document. When
+    ///   supplied, generic rules are narrowed to those that could match the markup at
+    ///   hand — the difference between a few hundred bytes and 216 KB per page. When
+    ///   absent, every generic rule is returned.
+    public func set(forHostname hostname: String, documentTokens: Set<String>? = nil) -> CosmeticSet {
         let host = hostname.lowercased()
         let candidates = Self.domainChain(of: host)
 
@@ -118,8 +141,20 @@ public struct CosmeticEngine: Sendable {
                 Self.add(rule, to: &result, cancelled: cancelled, isGeneric: false)
             }
         }
-        for rule in genericRules where Self.applies(rule, to: host, chain: candidates) {
-            Self.add(rule, to: &result, cancelled: cancelled, isGeneric: true)
+        if let documentTokens {
+            for token in documentTokens {
+                guard let rules = genericIndex[token] else { continue }
+                for rule in rules where Self.applies(rule, to: host, chain: candidates) {
+                    Self.add(rule, to: &result, cancelled: cancelled, isGeneric: true)
+                }
+            }
+            for rule in genericUnkeyed where Self.applies(rule, to: host, chain: candidates) {
+                Self.add(rule, to: &result, cancelled: cancelled, isGeneric: true)
+            }
+        } else {
+            for rule in genericRules where Self.applies(rule, to: host, chain: candidates) {
+                Self.add(rule, to: &result, cancelled: cancelled, isGeneric: true)
+            }
         }
 
         return result
@@ -157,6 +192,34 @@ public struct CosmeticEngine: Sendable {
         }
         guard !rule.includedDomains.isEmpty else { return true }
         return rule.includedDomains.contains { chain.contains($0) }
+    }
+
+    /// The class or id a selector leads with, which any element it matches must carry.
+    ///
+    /// `.ad-banner` and `div.promo > span` key on `ad-banner` and `promo`. A selector
+    /// leading with an attribute or a bare tag has no such token and is always applied;
+    /// there are few of those.
+    static func primaryToken(of selector: String) -> String? {
+        var index = selector.startIndex
+        while index < selector.endIndex {
+            let character = selector[index]
+            guard character == "." || character == "#" else {
+                index = selector.index(after: index)
+                continue
+            }
+            var end = selector.index(after: index)
+            while end < selector.endIndex, Self.isTokenCharacter(selector[end]) {
+                end = selector.index(after: end)
+            }
+            let token = String(selector[selector.index(after: index)..<end])
+            return token.isEmpty ? nil : token
+        }
+        return nil
+    }
+
+    static func isTokenCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character == "-" || character == "_"
+            || character == "\\"
     }
 
     /// `a.b.example.com` → `[a.b.example.com, b.example.com, example.com, com]`, so a

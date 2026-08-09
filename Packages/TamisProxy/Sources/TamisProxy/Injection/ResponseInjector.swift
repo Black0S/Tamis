@@ -124,7 +124,10 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
             return
         }
 
-        let set = cosmetic.set(forHostname: host)
+        // The document is already in hand, so generic rules can be narrowed to the
+        // classes and ids it actually carries — a few hundred bytes instead of 216 KB.
+        let tokens = DocumentTokens.scan(decoded)
+        let set = cosmetic.set(forHostname: host, documentTokens: tokens)
         let css = set.inlineCSS()
         // Procedural selectors are parsed here, not in the page: a malformed rule is
         // rejected before it can reach a browser, and the runtime stays an interpreter
@@ -162,7 +165,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         newHead.headers = headers
         events.emit(.injected(
             host: host,
-            selectors: set.specificSelectors.count + procedural.count,
+            selectors: set.specificSelectors.count + set.genericSelectors.count + procedural.count,
             bytes: markup.utf8.count
         ))
         flushDecoded(head: newHead, body: rewritten, trailers: trailers)

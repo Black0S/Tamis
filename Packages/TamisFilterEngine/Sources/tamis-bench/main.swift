@@ -77,6 +77,24 @@ for site in ["lemonde.fr", "youtube.com", "reddit.com", "example.org"] {
     ))
 }
 
+// The narrowing that makes generic filtering affordable from a proxy, measured on a
+// real page when one is supplied via TAMIS_PAGE.
+if let pagePath = ProcessInfo.processInfo.environment["TAMIS_PAGE"],
+   let html = try? String(contentsOfFile: pagePath, encoding: .utf8) {
+    let host = ProcessInfo.processInfo.environment["TAMIS_HOST"] ?? "example.com"
+    let tokens = DocumentTokens.scan(Array(html.utf8))
+    let wide = cosmetic.set(forHostname: host)
+    let narrow = cosmetic.set(forHostname: host, documentTokens: tokens)
+    print("")
+    print("narrowing on \(host)  (\(html.utf8.count) bytes of HTML)")
+    print("  document tokens      \(tokens.count)")
+    print("  generic, unnarrowed  \(wide.genericSelectors.count) selectors")
+    print("  generic, narrowed    \(narrow.genericSelectors.count) selectors")
+    print("  stylesheet           \(narrow.inlineCSS().utf8.count) bytes")
+    let widened = wide.genericSelectors.reduce(0) { $0 + $1.utf8.count + 2 }
+    print(String(format: "  saved                %.0f KB per page", Double(widened - narrow.inlineCSS().utf8.count) / 1024))
+}
+
 // The number behind the specific/generic split: inlining the generic set into every
 // page instead of handing it to the runtime.
 let genericBytes = cosmetic.set(forHostname: "example.invalid").genericSelectors

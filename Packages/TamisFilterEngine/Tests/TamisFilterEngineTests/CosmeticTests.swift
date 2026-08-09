@@ -99,7 +99,39 @@ struct CosmeticEngineTests {
         let set = engine.set(forHostname: "example.com")
         #expect(set.specificSelectors == [".specific-ad"])
         #expect(set.genericSelectors == [".generic-ad"])
-        #expect(!set.inlineCSS().contains(".generic-ad"))
+    }
+
+    /// Unnarrowed, the generic set is 216 KB per page. Narrowed against the markup at
+    /// hand it is the handful of rules that could possibly match, so it can simply join
+    /// the stylesheet.
+    @Test("generic rules are narrowed to the tokens a document carries")
+    func genericNarrowing() {
+        let engine = CosmeticEngine(rules: """
+        ##.ad-banner
+        ##.sponsored-post
+        ##.newsletter-popup
+        """)
+        let present = engine.set(forHostname: "example.com", documentTokens: ["ad-banner", "content"])
+        #expect(present.genericSelectors == [".ad-banner"])
+        #expect(present.inlineCSS().contains(".ad-banner"))
+        #expect(!present.inlineCSS().contains(".sponsored-post"))
+
+        // No tokens at all means nothing generic can match.
+        let absent = engine.set(forHostname: "example.com", documentTokens: [])
+        #expect(absent.genericSelectors.isEmpty)
+
+        // Omitting the parameter keeps the old behaviour: every generic rule.
+        let all = engine.set(forHostname: "example.com")
+        #expect(all.genericSelectors.count == 3)
+    }
+
+    /// A selector leading with an attribute or a bare tag names no class or id, so no
+    /// document scan can vouch for it. There are few of those, and they always apply.
+    @Test("generic rules with no leading class or id always apply")
+    func unkeyedGenerics() {
+        let engine = CosmeticEngine(rules: "##div[data-ad]")
+        let set = engine.set(forHostname: "example.com", documentTokens: [])
+        #expect(set.genericSelectors == ["div[data-ad]"])
     }
 
     /// An exception exists because the hide broke that site, so the selector must not
