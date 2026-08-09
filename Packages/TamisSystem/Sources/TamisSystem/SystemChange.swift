@@ -54,10 +54,6 @@ public struct SystemChange: Sendable, Identifiable {
 /// Everything installing would change, and everything uninstalling would undo.
 public enum Installation {
 
-    /// Reserved. The privileged daemon that should hold the authority's key is not
-    /// written, so nothing installs it — an install plan that copies a binary the build
-    /// does not produce fails at the moment the user has just typed their password.
-    /// See ``AuthorityStore`` for what is done instead, and what that costs.
     public static let daemonLabel = "io.github.black0s.tamisd"
     public static let resolverLabel = "io.github.black0s.tamis-dnsd"
     public static let helperLabel = "io.github.black0s.tamis-pac"
@@ -99,12 +95,30 @@ public enum Installation {
     public static func plan(proxyPort: UInt16 = 7654, pacPort: UInt16 = 7655) -> [SystemChange] {
         [
             SystemChange(
+                id: "daemon",
+                title: "Service privilégié",
+                effect: "Installe le service qui détient la clé de l'autorité de "
+                      + "certification. C'est lui, et lui seul, qui signe les "
+                      + "certificats : le proxy — le seul composant qui lit du contenu "
+                      + "hostile — les lui demande sans jamais voir la clé.",
+                undoCommand: "sudo launchctl bootout system/\(daemonLabel); "
+                           + "sudo rm /Library/LaunchDaemons/\(daemonLabel).plist",
+                scope: .administrator,
+                paths: [URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist")],
+                detect: {
+                    FileManager.default.fileExists(
+                        atPath: "/Library/LaunchDaemons/\(daemonLabel).plist"
+                    )
+                }
+            ),
+
+            SystemChange(
                 id: "authority",
                 title: "Autorité de certification",
                 effect: "Ajoute une autorité racine au trousseau du système. C'est ce "
                       + "qui permet à Tamis de lire le HTTPS — et donc ce qu'il faut "
-                      + "retirer pour qu'il ne le puisse plus. La clé privée ne quitte "
-                      + "jamais le service privilégié.",
+                      + "retirer pour qu'il ne le puisse plus. La clé privée reste dans "
+                      + "le service privilégié, qui n'expose aucun moyen de la lire.",
                 undoCommand: "sudo security delete-certificate -c \"\(authorityCommonNamePrefix)\" "
                            + "/Library/Keychains/System.keychain",
                 scope: .administrator,

@@ -204,3 +204,39 @@ struct ChainVerificationTests {
         }
     }
 }
+
+/// Persisting the authority is what lets a privileged daemon hold the key while every
+/// other process works from the certificate alone.
+@Suite("Authority persistence")
+struct AuthorityPersistenceTests {
+
+    @Test("An authority survives being written and read back")
+    func roundTrip() throws {
+        let original = try CertificateAuthority.generate(machineName: "Test")
+        let certificateDER = try original.certificateDER()
+        let keyDER = try #require(original.signingKeyDER())
+
+        let restored = try CertificateAuthority(
+            certificateDER: certificateDER, signingKeyDER: keyDER
+        )
+        #expect(restored.commonName == original.commonName)
+        #expect(try restored.certificateDER() == certificateDER)
+
+        // And it can still sign: a restored authority that cannot issue is a restored
+        // authority that does nothing.
+        let issuer = LeafIssuer(authority: restored)
+        let leaf = try issuer.issue(for: "example.com")
+        #expect(leaf.issuer == restored.certificate.subject)
+    }
+
+    /// An authority assembled from someone else's key owns nothing to export, and
+    /// saying so beats handing back bytes that are not what the caller assumes.
+    @Test("An authority that did not generate its key exports none")
+    func noKeyToExport() throws {
+        let generated = try CertificateAuthority.generate(machineName: "Test")
+        let assembled = CertificateAuthority(
+            certificate: generated.certificate, privateKey: generated.privateKey
+        )
+        #expect(assembled.signingKeyDER() == nil)
+    }
+}

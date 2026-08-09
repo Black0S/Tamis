@@ -26,6 +26,11 @@ public struct LaunchdJob: Sendable, Equatable {
     /// parses hostile input has no privileges at all.
     public let sockets: [Socket]
     public let keepAlive: Bool
+    /// Mach services launchd advertises on the job's behalf.
+    ///
+    /// Without this the daemon can listen all it likes and nothing can find it: an XPC
+    /// name is registered by launchd, not by the process.
+    public let machServices: [String]
 
     public struct Socket: Sendable, Equatable {
         public let name: String
@@ -46,7 +51,7 @@ public struct LaunchdJob: Sendable, Equatable {
 
     public init(
         label: String, kind: Kind, executable: URL, arguments: [String] = [],
-        sockets: [Socket] = [], keepAlive: Bool = true
+        sockets: [Socket] = [], keepAlive: Bool = true, machServices: [String] = []
     ) {
         self.label = label
         self.kind = kind
@@ -54,6 +59,7 @@ public struct LaunchdJob: Sendable, Equatable {
         self.arguments = arguments
         self.sockets = sockets
         self.keepAlive = keepAlive
+        self.machServices = machServices
     }
 
     /// Where this job's property list belongs.
@@ -85,6 +91,10 @@ public struct LaunchdJob: Sendable, Equatable {
             "KeepAlive": keepAlive,
             "ProcessType": "Interactive",
         ]
+
+        if !machServices.isEmpty {
+            job["MachServices"] = Dictionary(uniqueKeysWithValues: machServices.map { ($0, true) })
+        }
 
         if !sockets.isEmpty {
             var entries: [String: Any] = [:]
@@ -138,7 +148,8 @@ public struct LaunchdJob: Sendable, Equatable {
         LaunchdJob(
             label: Installation.daemonLabel,
             kind: .daemon,
-            executable: executable
+            executable: executable,
+            machServices: [Installation.daemonLabel]
         )
     }
 }

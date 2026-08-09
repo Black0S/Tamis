@@ -71,9 +71,6 @@ final class OnboardingModel {
     let limits = [
         "Aucune donnée ne quitte ce Mac. Jamais, pas même un rapport de plantage.",
         "Les sites bancaires ne sont jamais déchiffrés — 4 492 hôtes, listes verrouillées.",
-        // Was "la clé ne quitte pas le service privilégié". That service is not
-        // written, so the sentence was false — and a limit stated falsely is worse
-        // than a limit not claimed.
         AuthorityStore.keyProtectionCaveat,
         "Tout est annulable, et chaque commande d'annulation est affichée.",
     ]

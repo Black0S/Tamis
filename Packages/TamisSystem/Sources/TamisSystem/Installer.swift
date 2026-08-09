@@ -62,6 +62,7 @@ public struct Installer: Sendable {
     /// cannot inspect.
     public func privilegedScript(authorityPEM: URL) -> String {
         // The jobs point at the installed copies, never at the bundle.
+        let daemon = LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd"))
         let resolver = LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd"))
         let directory = installed.path(percentEncoded: false)
 
@@ -73,9 +74,16 @@ public struct Installer: Sendable {
         # bord voulu — le service ne dépend plus de l'application, donc supprimer
         # Tamis ne laisse pas le Mac avec un réglage proxy pointant vers rien.
         mkdir -p '\(directory)'
+        cp '\(bundled.appending(path: "tamisd").path(percentEncoded: false))' '\(directory)/tamisd'
         cp '\(bundled.appending(path: "tamis-dnsd").path(percentEncoded: false))' '\(directory)/tamis-dnsd'
         chown -R root:wheel '\(directory)'
-        chmod 755 '\(directory)/tamis-dnsd'
+        chmod 755 '\(directory)/tamisd' '\(directory)/tamis-dnsd'
+
+        # Service privilégié : il crée l'autorité au premier démarrage et la garde.
+        cp '\(stagedPlist(for: daemon).path(percentEncoded: false))' '\(daemon.plistURL.path(percentEncoded: false))'
+        chown root:wheel '\(daemon.plistURL.path(percentEncoded: false))'
+        chmod 644 '\(daemon.plistURL.path(percentEncoded: false))'
+        launchctl bootstrap \(daemon.domain) '\(daemon.plistURL.path(percentEncoded: false))'
 
         # Autorité de certification, marquée de confiance pour SSL uniquement.
         security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
@@ -132,6 +140,7 @@ public struct Installer: Sendable {
         let staging = Installation.supportDirectory.appending(path: "staging")
         var outcomes: [Outcome] = []
         for job in [
+            LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd")),
             LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd")),
         ] {
             outcomes.append(try write(

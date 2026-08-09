@@ -23,6 +23,13 @@ public enum TLSError: Error, Sendable, Equatable {
 public struct CertificateAuthority: Sendable {
     public let certificate: Certificate
     public let privateKey: Certificate.PrivateKey
+    /// The raw signing key, kept so the authority can be written to disk and read back.
+    ///
+    /// Deliberately not public. Only the privileged daemon persists an authority, and
+    /// everything else works from the certificate — which is public by nature — plus a
+    /// leaf the daemon signed. Exposing this would make the design's central promise
+    /// depend on nobody calling it.
+    private let rawKey: P256.Signing.PrivateKey?
 
     /// Ten years. Expiry is handled by warning and renewal (see SPEC §7.5), never by
     /// letting it lapse under a running installation.
@@ -35,6 +42,28 @@ public struct CertificateAuthority: Sendable {
     public init(certificate: Certificate, privateKey: Certificate.PrivateKey) {
         self.certificate = certificate
         self.privateKey = privateKey
+        self.rawKey = nil
+    }
+
+    init(certificate: Certificate, rawKey: P256.Signing.PrivateKey) {
+        self.certificate = certificate
+        self.privateKey = Certificate.PrivateKey(rawKey)
+        self.rawKey = rawKey
+    }
+
+    /// PKCS#8 DER of the signing key, for the one component allowed to store it.
+    ///
+    /// `nil` for an authority built from a certificate and a key it did not generate —
+    /// there is nothing to export that it owns.
+    public func signingKeyDER() -> [UInt8]? {
+        rawKey.map { Array($0.derRepresentation) }
+    }
+
+    /// Reads an authority back from what ``signingKeyDER()`` and ``certificateDER()``
+    /// wrote.
+    public init(certificateDER: [UInt8], signingKeyDER: [UInt8]) throws {
+        let key = try P256.Signing.PrivateKey(derRepresentation: Data(signingKeyDER))
+        self.init(certificate: try Certificate(derEncoded: certificateDER), rawKey: key)
     }
 
     /// Generates a fresh authority.
@@ -73,7 +102,7 @@ public struct CertificateAuthority: Sendable {
             issuerPrivateKey: privateKey
         )
 
-        return CertificateAuthority(certificate: certificate, privateKey: privateKey)
+        return CertificateAuthority(certificate: certificate, rawKey: key)
     }
 
     public var commonName: String {

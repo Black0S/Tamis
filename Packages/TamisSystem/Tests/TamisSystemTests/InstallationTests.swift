@@ -101,15 +101,21 @@ struct PlanMatchesBuildTests {
             .privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
         // The three the bundle script copies. Anything else would be a path that does
         // not exist on the machine the install runs on.
-        let shipped = ["Tamis", "tamis-dnsd", "tamis-pac"]
-        for name in ["tamisd", "tamis-proxy", "tamis-lists"] where !shipped.contains(name) {
+        let shipped = ["Tamis", "tamisd", "tamis-dnsd", "tamis-pac"]
+        for name in ["tamis-proxy", "tamis-lists", "tamis-bench"] where !shipped.contains(name) {
             #expect(!script.contains("MacOS/\(name)"), "le script copie \(name), absent du bundle")
         }
     }
 
-    @Test("Nothing in the plan installs the unwritten daemon")
-    func noDaemonStep() {
-        #expect(Installation.plan().allSatisfy { $0.id != "daemon" })
+    /// The daemon is installed again now that it exists, and it must be first: the
+    /// authority is created by it, so adding the certificate to the trust store before
+    /// the daemon has run would trust a root nobody holds.
+    @Test("The daemon is installed, and before the authority")
+    func daemonFirst() throws {
+        let ids = Installation.plan().map(\.id)
+        let daemon = try #require(ids.firstIndex(of: "daemon"))
+        let authority = try #require(ids.firstIndex(of: "authority"))
+        #expect(daemon < authority)
     }
 }
 
@@ -151,7 +157,7 @@ struct AuthorityStoreTests {
     /// place, so the onboarding and the settings screen cannot drift apart on it.
     @Test("The caveat is stated, and says what is actually true")
     func caveatIsHonest() {
-        #expect(AuthorityStore.keyProtectionCaveat.contains("n'est pas encore écrit"))
-        #expect(AuthorityStore.keyProtectionCaveat.contains("compte utilisateur"))
+        #expect(AuthorityStore.keyProtectionCaveat.contains("ne quitte jamais"))
+        #expect(AuthorityStore.keyProtectionCaveat.contains("aucun moyen de la lire"))
     }
 }

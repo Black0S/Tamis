@@ -4,15 +4,12 @@ import Foundation
 /// Where Tamis keeps its certificate authority.
 ///
 /// **The key is the whole security question of this project.** Whoever holds it can
-/// mint a certificate for any site, so the design has always been that it lives in a
-/// privileged daemon and the proxy — the process that parses hostile content — asks it
-/// for leaves over XPC without ever seeing it.
+/// mint a certificate for any site, so it lives in `tamisd` — root-owned, 0600 — and
+/// the proxy asks for leaves over XPC without ever seeing it.
 ///
-/// That daemon is not written. Until it is, the key sits in the user's own account, in
-/// a file readable only by them: better than nothing, weaker than the design, and the
-/// distance between the two is stated here and on the screen that asks for consent
-/// rather than glossed. A compromise of the proxy today reaches the key; once `tamisd`
-/// exists, it will not.
+/// This type is what remains for the unprivileged side: reading the certificate, which
+/// is public by nature. It writes a key only in the development path, where the proxy
+/// tool generates its own throwaway authority and no daemon is installed.
 public struct AuthorityStore: Sendable {
 
     public enum Failure: Error, Sendable, Equatable {
@@ -20,12 +17,12 @@ public struct AuthorityStore: Sendable {
         case missing
     }
 
-    /// The gap between what runs and what the design calls for, in one place so the
-    /// interface can quote it instead of inventing its own wording.
+    /// Stated in one place so the onboarding and the settings screen cannot drift.
     public static let keyProtectionCaveat = """
-    La clé de l'autorité est stockée dans votre compte utilisateur, lisible par vous \
-    seul. Le service privilégié qui doit la détenir à part n'est pas encore écrit : \
-    aujourd'hui, un logiciel qui compromettrait le proxy pourrait l'atteindre.
+    La clé de l'autorité ne quitte jamais le service privilégié : il signe les \
+    certificats sur demande et n'expose aucun moyen de la lire. Une compromission du \
+    proxy donnerait des certificats le temps de la compromission, pas la capacité d'en \
+    fabriquer ensuite.
     """
 
     public let directory: URL

@@ -174,8 +174,8 @@ The History screen shows what the resolver decided, and the DNS resolver writes 
 ## Build and test
 
 ```bash
-for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts \
-               TamisLists TamisApps TamisHistory TamisSystem TamisProxy; do
+for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts TamisLists \
+               TamisApps TamisHistory TamisSystem TamisDaemon TamisProxy; do
   swift test --package-path "Packages/$package"
 done
 ```
@@ -219,6 +219,7 @@ root:
 | `TamisApps` | Browser discovery, per-app policy, process attribution |
 | `TamisHistory` | The decision log: schema, batching, retention |
 | `TamisSystem` | Preflight checks, and what installing would change |
+| `TamisDaemon` | The privileged service that holds the authority's key |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
 ## What Tamis will never do
@@ -235,10 +236,10 @@ root:
   no network, and the banking and password-manager lists cannot be disabled.
 - **Intercept Tor Browser or Mullvad Browser.** Locked out, because filtering them
   would destroy the reason they exist.
-- **Claim a protection it does not yet have.** The design puts the authority's private
-  key in a privileged daemon so a compromise of the proxy cannot reach it. That daemon
-  is not written: today the key sits in the user's account, readable only by them. The
-  onboarding says so, in the same place it lists the other limits.
+- **Let its own authority's key leave the privileged daemon.** `tamisd` holds it,
+  root-owned at 0600, and exports no method that returns it — the proxy asks for a
+  signed leaf and gets one. A compromise of the proxy yields certificates while it
+  lasts, not the ability to mint them afterwards.
 
 ## Where this stands
 
@@ -276,7 +277,7 @@ root:
 | PAC helper — outlives the app, fails open | done |
 | Onboarding — nine screens, one password, nothing left behind | done |
 | Update check — reports, never installs | done |
-| Privileged daemon holding the authority's key | not started |
+| Privileged daemon holding the authority's key | done |
 | Running a real install | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
