@@ -218,7 +218,7 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                 ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
                 ResponseInjectingHandler(
                     client: client, host: host, cosmetic: cosmetic,
-                    context: requestContext, events: events
+                    context: requestContext, events: events, propagatesClose: true
                 ),
             ])
             .flatMap {
@@ -227,7 +227,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                     ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
                     HTTPFilteringHandler(
                         engine: engine, host: host, upstream: self.upstream,
-                        events: events, requestContext: requestContext
+                        events: events, requestContext: requestContext,
+                        propagatesClose: true
                     ),
                 ])
             }

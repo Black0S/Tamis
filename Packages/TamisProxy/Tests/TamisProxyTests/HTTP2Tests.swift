@@ -100,12 +100,21 @@ private final class H2PageHandler: ChannelInboundHandler {
 /// The fixture and the two protocol-agnostic assertions are kept enabled; the three
 /// that require the bridge are disabled until it carries a response.
 ///
-/// State of the work: ALPN negotiates h2 on both sides, the bridge installs, the client
-/// request reaches the origin in full and the origin answers — verified by printing
-/// inside the fixture. The response never reaches the upstream stream's handler. Ruled
-/// out so far: the legacy versus inline multiplexer, the connection preface on a
-/// channel that was already active, autoRead on the stream channel, and cross-event-loop
-/// hops.
+/// State of the work, narrowed by tapping the pipeline rather than by guessing:
+///
+/// - ALPN negotiates h2 on both sides and the bridge installs.
+/// - The client's request reaches the origin in full, and the origin answers: 177 bytes
+///   of response frames arrive on the upstream connection, past TLS.
+/// - Those frames are never delivered to the upstream stream channel, so the response
+///   handler never runs.
+///
+/// One real bug was found and fixed on the way: close propagation between the two sides
+/// cancelled the stream with RST_STREAM the moment the response landed. Correct for
+/// HTTP/1.1, where each side is a whole connection; wrong for streams.
+///
+/// Ruled out: legacy versus inline multiplexer, connection preface on an already-active
+/// channel, autoRead on the stream channel, cross-event-loop hops, and now close
+/// propagation.
 @Suite("HTTP/2", .serialized)
 struct HTTP2Tests {
 
@@ -203,7 +212,7 @@ struct HTTP2Tests {
     /// Over HTTP/1.1 a browser opens six connections per origin, so Tamis performs six
     /// TLS handshakes on each side. Over HTTP/2 it opens one and multiplexes — for a
     /// page with eighty resources, eighty handshakes become one.
-    @Test("an HTTP/2 origin is intercepted end to end", .disabled("bridge does not carry the response yet"))
+    @Test("an HTTP/2 origin is intercepted end to end", .disabled("bridge does not deliver response frames to the stream channel"))
     func interceptsHTTP2() async throws {
         try await run { page, trace, events in
             #expect(page.contains("Contenu."), "trace: \(trace)")
@@ -223,7 +232,7 @@ struct HTTP2Tests {
     /// The protocol is taken from the origin and mirrored to the client, never chosen
     /// by the client. A browser picking HTTP/2 against an HTTP/1.1 origin would need one
     /// upstream connection per concurrent stream, and a pool to manage them.
-    @Test("cosmetic injection works the same over HTTP/2", .disabled("bridge does not carry the response yet"))
+    @Test("cosmetic injection works the same over HTTP/2", .disabled("bridge does not deliver response frames to the stream channel"))
     func injectionOverHTTP2() async throws {
         try await run(cosmetic: CosmeticEngine(rules: "localhost##.ad-banner")) { page, trace, _ in
             #expect(page.contains("<style nonce="), "trace: \(trace)")
@@ -233,7 +242,7 @@ struct HTTP2Tests {
         }
     }
 
-    @Test("request blocking works the same over HTTP/2", .disabled("bridge does not carry the response yet"))
+    @Test("request blocking works the same over HTTP/2", .disabled("bridge does not deliver response frames to the stream channel"))
     func blockingOverHTTP2() async throws {
         try await run(
             engine: FilterEngine(rules: "||localhost/ads/"),

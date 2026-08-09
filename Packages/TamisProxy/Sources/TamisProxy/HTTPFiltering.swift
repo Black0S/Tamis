@@ -16,6 +16,14 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
     private let upstream: Channel
     private let events: EventSink
     private let requestContext: RequestContext
+    /// Whether the peer channel should be closed when this one goes inactive.
+    ///
+    /// True over HTTP/1.1, where each side is a whole connection and the two lifetimes
+    /// are the same. False over HTTP/2, where these are streams: closing the peer
+    /// stream when this one finishes cancels a response that is still in flight, which
+    /// is exactly what it did until this flag existed. Connection lifetimes are linked
+    /// at the connection level instead.
+    private let propagatesClose: Bool
 
     /// Set on `.head` and consulted on `.body`/`.end`: once a request is refused, its
     /// body must be swallowed rather than forwarded to an origin that will never see
@@ -27,13 +35,15 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
         host: String,
         upstream: Channel,
         events: EventSink,
-        requestContext: RequestContext
+        requestContext: RequestContext,
+        propagatesClose: Bool
     ) {
         self.engine = engine
         self.host = host
         self.upstream = upstream
         self.events = events
         self.requestContext = requestContext
+        self.propagatesClose = propagatesClose
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -83,12 +93,12 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        upstream.close(promise: nil)
+        if propagatesClose { upstream.close(promise: nil) }
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        upstream.close(promise: nil)
+        if propagatesClose { upstream.close(promise: nil) }
         context.close(promise: nil)
     }
 

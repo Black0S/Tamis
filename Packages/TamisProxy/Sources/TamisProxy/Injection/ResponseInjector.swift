@@ -42,6 +42,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     private let cosmetic: CosmeticEngine?
     private let context: RequestContext
     private let events: EventSink
+    /// See the note on ``HTTPFilteringHandler``: streams must not close their peer.
+    private let propagatesClose: Bool
     private var mode: Mode = .passthrough
 
     init(
@@ -49,13 +51,15 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         host: String,
         cosmetic: CosmeticEngine?,
         context: RequestContext,
-        events: EventSink
+        events: EventSink,
+        propagatesClose: Bool
     ) {
         self.client = client
         self.host = host
         self.cosmetic = cosmetic
         self.context = context
         self.events = events
+        self.propagatesClose = propagatesClose
     }
 
     func channelRead(context ctx: ChannelHandlerContext, data: NIOAny) {
@@ -100,7 +104,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context ctx: ChannelHandlerContext) {
-        client.close(promise: nil)
+        if propagatesClose { client.close(promise: nil) }
         ctx.fireChannelInactive()
     }
 
