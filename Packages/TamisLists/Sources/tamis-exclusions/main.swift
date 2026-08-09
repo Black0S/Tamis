@@ -10,7 +10,82 @@ import TamisLists
 setvbuf(stdout, nil, _IOLBF, 0)
 
 let set = BundledExclusions.makeSet()
-var hosts = Array(CommandLine.arguments.dropFirst())
+let hosts = Array(CommandLine.arguments.dropFirst())
+
+// Runs the whole update chain against the live upstreams: download, guardrails, diff,
+// verdict. Nothing is written — it answers what would happen, which is the question
+// worth asking before an update runs unattended.
+if hosts.first == "--check-updates" {
+    let downloader = ListDownloader()
+    var currentTotal = 0
+    var proposedTotal = 0
+    var perSource: [(String, ListDiff)] = []
+    var failure: UpdateGuard.Rejection?
+
+    for source in BundledExclusions.sources {
+        guard source.url != nil else { continue }
+        // The vendored files sit next to each other upstream; the source URL is the
+        // repository, so the raw file is derived from the identifier.
+        let file = source.id.replacingOccurrences(of: "adguard.", with: "")
+            .replacingOccurrences(of: "zen.", with: "")
+        let raw: String
+        if source.provider == "AdGuard" {
+            raw = "https://raw.githubusercontent.com/AdguardTeam/HttpsExclusions/master/exclusions/\(file).txt"
+        } else {
+            raw = "https://raw.githubusercontent.com/irbis-sh/zen-desktop/master/internal/sysproxy/exclusions/\(file).txt"
+        }
+
+        do {
+            let response = try await downloader.fetch(URL(string: raw)!)
+            if let rejection = UpdateGuard.checkTransport(
+                statusCode: response.statusCode,
+                contentLength: response.contentLength,
+                receivedBytes: response.bytes
+            ) {
+                print("  \(source.name) — \(rejection.summary)")
+                failure = rejection
+                continue
+            }
+            let (fresh, _) = ExclusionSource.parse(
+                response.text, id: source.id, name: source.name,
+                provider: source.provider, licence: source.licence, lock: source.lock
+            )
+            currentTotal += source.entries.count
+            proposedTotal += fresh.entries.count
+            perSource.append((source.name, ListDiff(
+                from: source.entries.map(\.pattern), to: fresh.entries.map(\.pattern)
+            )))
+        } catch {
+            print("  \(source.name) — \(error)")
+        }
+    }
+
+    print("Mise à jour des exclusions — simulation, rien n'est écrit\n")
+    for (name, diff) in perSource where !diff.isEmpty {
+        print("  \(name)  +\(diff.added.count) / −\(diff.removed.count)")
+        for added in diff.added.prefix(6) { print("      + \(added)") }
+        for removed in diff.removed.prefix(6) { print("      − \(removed)") }
+    }
+    if perSource.allSatisfy(\.1.isEmpty) { print("  Aucun changement.") }
+
+    let combined = ListDiff(
+        added: perSource.flatMap(\.1.added), removed: perSource.flatMap(\.1.removed)
+    )
+    let rejection = failure ?? UpdateGuard.check(
+        policy: .exclusions, proposedCount: proposedTotal, currentCount: currentTotal
+    )
+    print("\n  Total  \(currentTotal) → \(proposedTotal)")
+    switch UpdateOutcome.decide(policy: .exclusions, rejection: rejection, diff: combined) {
+    case .routine:
+        print("  📋 ROUTINE — ajouts seuls, appliqués sans interruption")
+    case .awaitingValidation(let applied, let pending):
+        print("  🔔 VALIDATION — \(applied.added.count) ajout(s) appliqués, "
+              + "\(pending.count) retrait(s) en attente de votre décision")
+    case .anomaly(let rejection):
+        print("  🚨 ANOMALIE — \(rejection.summary) Rien n'est appliqué.")
+    }
+    exit(0)
+}
 
 // The allowlist has to be readable by anyone who wants to check it. A hard-coded,
 // invisible allowlist inside software that intercepts all traffic has the shape of a

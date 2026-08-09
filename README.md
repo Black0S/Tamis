@@ -77,6 +77,15 @@ swift run --package-path Packages/TamisLists tamis-exclusions mabanque.bnppariba
 Lists the shipped HTTPS exclusions, or answers *is this host protected* — and by which
 list, exactly or with subdomains, under which application restriction.
 
+```bash
+swift run --package-path Packages/TamisLists tamis-exclusions --allowlist
+swift run --package-path Packages/TamisLists tamis-exclusions --check-updates
+```
+
+`--allowlist` prints the hosts Tamis will never block and why each one is there.
+`--check-updates` runs the whole update chain against the live upstreams — download,
+guardrails, diff, verdict — and writes nothing.
+
 ### The application
 
 ```bash
@@ -150,7 +159,8 @@ root:
 | User scripts and user styles | done |
 | HTTPS exclusions — embedded, locked, wired into the proxy | done |
 | Blocklist catalogue — 165 lists, embedded, nothing downloaded | done |
-| List downloading, update guardrails, diffs | not started |
+| List downloading, update guardrails, diffs, rollback | done |
+| Wiring lists into the engine and the interface | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |
