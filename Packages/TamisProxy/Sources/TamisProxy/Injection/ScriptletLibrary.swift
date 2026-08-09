@@ -44,6 +44,15 @@ public enum ScriptletLibrary {
     /// wrong in one scriptlet and right in another is how a rule silently stops working
     /// on one site and not the next.
     static let preamble = #"""
+    function pruneJSON(value, paths) {
+      for (var i = 0; i < paths.length; i++) {
+        var parts = paths[i].split("."), owner = value;
+        for (var p = 0; p < parts.length - 1 && owner; p++) { owner = owner[parts[p]]; }
+        if (owner && typeof owner === "object") { delete owner[parts[parts.length - 1]]; }
+      }
+      return value;
+    }
+
     function makeMatcher(needle) {
       if (needle === "" || needle === "*") { return function () { return true; }; }
       var negated = false;
@@ -496,20 +505,285 @@ public enum ScriptletLibrary {
         try { setInterval(remove, 1000); } catch (e) {}
         """#,
 
+        // Links carry the tracking that the request-level filter cannot see: the
+        // destination is inside the href, so blocking the URL would block the click.
+        // Rewriting it keeps the link working and drops the passenger.
+        "href-sanitizer": #"""
+        var selector = args[0] || "a[href]", source = args[1] || "?";
+        var extract = function (anchor) {
+          if (source === "text") { return (anchor.textContent || "").trim(); }
+          if (source.charAt(0) === "?") {
+            var name = source.slice(1);
+            try {
+              var url = new URL(anchor.href, location.href);
+              return url.searchParams.get(name) || "";
+            } catch (e) { return ""; }
+          }
+          return anchor.getAttribute(source) || "";
+        };
+        var sanitize = function () {
+          var anchors = document.querySelectorAll(selector);
+          for (var i = 0; i < anchors.length; i++) {
+            var candidate = extract(anchors[i]);
+            if (!candidate) continue;
+            try {
+              var resolved = new URL(candidate, location.href);
+              if (resolved.protocol === "http:" || resolved.protocol === "https:") {
+                anchors[i].href = resolved.href;
+              }
+            } catch (e) {}
+          }
+        };
+        var run = function () {
+          sanitize();
+          new MutationObserver(sanitize).observe(document.documentElement,
+            { childList: true, subtree: true });
+        };
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", run);
+        } else { run(); }
+        """#,
+
+        // Boosters shorten a timer rather than cancel it. Cancelling would leave the
+        // page waiting for ever on a countdown it uses as a gate; shortening lets the
+        // gate open at once.
+        "nano-settimeout-booster": #"""
+        var matcher = makeMatcher(args[0] || ""), wanted = args[1], factor = parseFloat(args[2]);
+        if (!isFinite(factor)) factor = 0.02;
+        var original = window.setTimeout;
+        window.setTimeout = function (callback, delay) {
+          var text = typeof callback === "function" ? callback.toString() : String(callback);
+          var delayMatches = wanted === undefined || wanted === "" || String(delay) === String(wanted);
+          if (matcher(text) && delayMatches) {
+            arguments[1] = factor === 0 ? 0 : delay * factor;
+          }
+          return original.apply(window, arguments);
+        };
+        """#,
+
+        "nano-setinterval-booster": #"""
+        var matcher = makeMatcher(args[0] || ""), wanted = args[1], factor = parseFloat(args[2]);
+        if (!isFinite(factor)) factor = 0.05;
+        var original = window.setInterval;
+        window.setInterval = function (callback, delay) {
+          var text = typeof callback === "function" ? callback.toString() : String(callback);
+          var delayMatches = wanted === undefined || wanted === "" || String(delay) === String(wanted);
+          if (matcher(text) && delayMatches) {
+            arguments[1] = factor === 0 ? 0 : delay * factor;
+          }
+          return original.apply(window, arguments);
+        };
+        """#,
+
+        // Rewrites the text of a node. Distinct from remove-node-text, which removes
+        // the node: a list asking for one and getting the other loses either the
+        // wording or the element.
+        "replace-node-text": #"""
+        var selector = args[0], pattern = args[1], replacement = args[2] || "";
+        if (!selector || pattern === undefined) return;
+        var expression;
+        if (pattern.length > 1 && pattern.charAt(0) === "/" && pattern.lastIndexOf("/") > 0) {
+          var end = pattern.lastIndexOf("/");
+          try {
+            expression = new RegExp(pattern.slice(1, end), pattern.slice(end + 1) || "g");
+          } catch (e) { return; }
+        }
+        var apply = function () {
+          var nodes = document.querySelectorAll(selector);
+          for (var i = 0; i < nodes.length; i++) {
+            var text = nodes[i].textContent;
+            if (typeof text !== "string") continue;
+            var updated = expression
+              ? text.replace(expression, replacement)
+              : text.split(pattern).join(replacement);
+            if (updated !== text) nodes[i].textContent = updated;
+          }
+        };
+        var run = function () {
+          apply();
+          new MutationObserver(apply).observe(document.documentElement,
+            { childList: true, subtree: true, characterData: true });
+        };
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", run);
+        } else { run(); }
+        """#,
+
+        // The page asks whether its pop-up library loaded; answering "yes, and it did
+        // nothing" is what keeps the rest of the page working.
+        "popads-dummy": #"""
+        var noop = function () {};
+        var dummy = { serve: noop, cmd: { push: noop }, popundersPerIP: "0" };
+        Object.defineProperty(window, "PopAds", { get: function () { return dummy; }, set: noop });
+        Object.defineProperty(window, "popns", { get: function () { return dummy; }, set: noop });
+        Object.defineProperty(window, "PopUnder", { get: function () { return dummy; }, set: noop });
+        """#,
+
+        // BlockAdblock and FuckAdBlock detect blockers by baiting them. Both are
+        // answered rather than removed: a site that cannot find its detector often
+        // assumes the worst and blocks itself.
+        "bab-defuser": #"""
+        var signature = "/^\\/\\*.*bab_/";
+        var originalEval = window.eval;
+        window.eval = function (source) {
+          var text = String(source);
+          if (text.indexOf("bab_") !== -1 || text.indexOf("babasbmsgx") !== -1) { return; }
+          return originalEval.apply(window, arguments);
+        };
+        var originalSetTimeout = window.setTimeout;
+        window.setTimeout = function (callback) {
+          var text = typeof callback === "function" ? callback.toString() : String(callback);
+          if (text.indexOf("bab_") !== -1) { return 0; }
+          return originalSetTimeout.apply(window, arguments);
+        };
+        """#,
+
+        "fuckadblock": #"""
+        var noop = function () {};
+        function FuckAdBlock() {}
+        FuckAdBlock.prototype = {
+          setOption: function () { return this; },
+          check: function () { return true; },
+          clearEvent: noop,
+          on: function (detected, handler) {
+            // The page is told no blocker was found, asynchronously, the way the real
+            // library reports it.
+            if (detected === false && typeof handler === "function") { setTimeout(handler, 1); }
+            return this;
+          },
+          onDetected: function () { return this; },
+          onNotDetected: function (handler) {
+            if (typeof handler === "function") { setTimeout(handler, 1); }
+            return this;
+          },
+          emitEvent: function () { return this; }
+        };
+        var instance = new FuckAdBlock();
+        window.FuckAdBlock = FuckAdBlock;
+        window.BlockAdBlock = FuckAdBlock;
+        window.fuckAdBlock = instance;
+        window.blockAdBlock = instance;
+        """#,
+
+        "set-session-storage-item": #"""
+        var key = args[0], value = args[1];
+        if (!key) return;
+        try {
+          if (value === "$remove$") { sessionStorage.removeItem(key); return; }
+          sessionStorage.setItem(key, value === undefined ? "" : value);
+        } catch (e) {}
+        """#,
+
+        // Animation frames are the other timer overlays wait on, and the one that keeps
+        // running when a tab is visible.
+        "prevent-requestanimationframe": #"""
+        var matcher = makeMatcher(args[0] || "");
+        var original = window.requestAnimationFrame;
+        if (typeof original !== "function") return;
+        window.requestAnimationFrame = function (callback) {
+          var text = typeof callback === "function" ? callback.toString() : String(callback);
+          if (matcher(text)) { return 0; }
+          return original.apply(window, arguments);
+        };
+        """#,
+
+        // A meta refresh is a page reloading itself out from under the reader.
+        "refresh-defuser": #"""
+        var strip = function () {
+          var metas = document.querySelectorAll("meta[http-equiv]");
+          for (var i = 0; i < metas.length; i++) {
+            if ((metas[i].getAttribute("http-equiv") || "").toLowerCase() === "refresh") {
+              metas[i].parentNode && metas[i].parentNode.removeChild(metas[i]);
+            }
+          }
+        };
+        strip();
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", strip);
+        }
+        """#,
+
+        // target="_blank" turned into a new window is how a click becomes a pop-up.
+        "disable-newtab-links": #"""
+        document.addEventListener("click", function (event) {
+          var node = event.target;
+          while (node) {
+            if (node.localName === "a" && node.hasAttribute("target")) {
+              event.stopPropagation();
+              event.preventDefault();
+              return;
+            }
+            node = node.parentElement;
+          }
+        }, true);
+        """#,
+
+        "fingerprint2": #"""
+        var noop = function () {};
+        function Fingerprint2() {}
+        Fingerprint2.get = function (options, callback) {
+          if (typeof options === "function") { callback = options; }
+          if (typeof callback === "function") { callback([], ""); }
+        };
+        Fingerprint2.prototype = { get: Fingerprint2.get, then: noop };
+        window.Fingerprint2 = Fingerprint2;
+        """#,
+
+        // The same pruning, applied to a response instead of to JSON.parse.
+        //
+        // A page that fetches its adverts as data rather than as elements is invisible
+        // to both the request filter and the cosmetic rules: the URL is legitimate and
+        // the markup is built afterwards, in script. Pruning the payload is the only
+        // point at which it can be reached.
+        "json-prune-xhr-response": #"""
+        var toPrune = (args[0] || "").split(" ").filter(Boolean);
+        if (!toPrune.length) return;
+        var original = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function () {
+          this.addEventListener("readystatechange", function () {
+            if (this.readyState !== 4 || this.responseType !== "" && this.responseType !== "text") return;
+            try {
+              var parsed = JSON.parse(this.responseText);
+              var pruned = pruneJSON(parsed, toPrune);
+              Object.defineProperty(this, "responseText", {
+                value: JSON.stringify(pruned), writable: false
+              });
+              Object.defineProperty(this, "response", {
+                value: JSON.stringify(pruned), writable: false
+              });
+            } catch (e) {}
+          });
+          return original.apply(this, arguments);
+        };
+        """#,
+
+        "json-prune-fetch-response": #"""
+        var toPrune = (args[0] || "").split(" ").filter(Boolean);
+        if (!toPrune.length || typeof fetch !== "function") return;
+        var original = window.fetch;
+        window.fetch = function () {
+          return original.apply(window, arguments).then(function (response) {
+            var clone = response.clone();
+            return clone.text().then(function (text) {
+              try {
+                var pruned = pruneJSON(JSON.parse(text), toPrune);
+                return new Response(JSON.stringify(pruned), {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers
+                });
+              } catch (e) { return response; }
+            }).catch(function () { return response; });
+          });
+        };
+        """#,
+
         "json-prune": #"""
         var toPrune = (args[0] || "").split(" ").filter(Boolean);
         if (!toPrune.length) return;
-        var prune = function (value) {
-          for (var i = 0; i < toPrune.length; i++) {
-            var parts = toPrune[i].split("."), owner = value;
-            for (var p = 0; p < parts.length - 1 && owner; p++) owner = owner[parts[p]];
-            if (owner && typeof owner === "object") delete owner[parts[parts.length - 1]];
-          }
-          return value;
-        };
         var originalParse = JSON.parse;
         JSON.parse = function () {
-          return prune(originalParse.apply(JSON, arguments));
+          return pruneJSON(originalParse.apply(JSON, arguments), toPrune);
         };
         """#,
     ]

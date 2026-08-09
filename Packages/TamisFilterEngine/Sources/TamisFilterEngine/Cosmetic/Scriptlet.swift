@@ -34,7 +34,7 @@ public struct Scriptlet: Sendable, Equatable {
 
     /// Lists write the same scriptlet several ways; uBO's aliases and the `.js` suffix
     /// are both common.
-    static func normalise(_ name: String) -> String {
+    public static func normalise(_ name: String) -> String {
         var name = name.lowercased()
         if name.hasSuffix(".js") { name = String(name.dropLast(3)) }
         switch name {
@@ -54,6 +54,18 @@ public struct Scriptlet: Sendable, Equatable {
         case "aeld", "addeventlistener-defuser": return "prevent-addeventlistener"
         case "nowoif", "no-window-open-if", "window.open-defuser": return "prevent-window-open"
         case "noeval", "noeval-if", "prevent-eval-if": return "prevent-eval"
+        // Already implemented under uBO's own name; only the alias was missing.
+        case "remove-cookie": return "cookie-remover"
+        case "nano-sib", "nano-setinterval-booster": return "nano-setinterval-booster"
+        case "nano-stb", "nano-settimeout-booster": return "nano-settimeout-booster"
+        // Distinct from remove-node-text: this rewrites the text, that removes the node.
+        case "rpnt", "sed": return "replace-node-text"
+        case "norafif", "no-requestanimationframe-if": return "prevent-requestanimationframe"
+        case "sss": return "set-session-storage-item"
+        case "popads.net", "popads": return "popads-dummy"
+        case "nobab", "bab-defuser", "prevent-bab": return "bab-defuser"
+        case "nofab", "fuckadblock.js-3.2.0": return "fuckadblock"
+        case "refresh-defuser", "prevent-refresh": return "refresh-defuser"
         default:      return name
         }
     }

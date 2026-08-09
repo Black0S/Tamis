@@ -258,7 +258,7 @@ root:
 | DNS screen — provider, local resolver, live decisions | done |
 | Scripts screen — filesystem tree, editor, install, revert | done |
 | User scripts and styles reaching real pages through the proxy | done |
-| Scriptlets — 21 implemented, 85.9 % of calls in the enabled lists | done |
+| Scriptlets — 35 implemented, 95.6 % of calls in the enabled lists | done |
 | Applications screen — browser discovery, three-state policy | done |
 | Attributing a connection to the application that opened it | done |
 | Decision log — schema, batching, retention, erase | done |

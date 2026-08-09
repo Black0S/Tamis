@@ -121,39 +121,91 @@ struct ScriptletLibraryTests {
 @Suite("Scriptlet coverage")
 struct ScriptletCoverageTests {
 
-    /// The names EasyList and EasyPrivacy actually invoke, with the count of rules
-    /// behind each. Kept here so a coverage regression fails a test rather than being
-    /// noticed months later.
-    static let demanded: [(name: String, rules: Int)] = [
-        ("set-constant", 6), ("remove-node-text", 4), ("abort-current-script", 4),
-        ("set-local-storage-item", 3), ("abort-on-stack-trace", 3), ("prevent-xhr", 2),
-        ("set-cookie", 1), ("set-attr", 1), ("prevent-fetch", 1), ("cookie-remover", 1),
-        ("json-edit", 1),
+    /// Every `+js(…)` call across the eleven lists of the suggested selection, with
+    /// aliases resolved, counted on 2026-08-10. 3 291 calls over 60 distinct scriptlets.
+    ///
+    /// This replaces a hand-written sample of twenty-seven rules that was being read as
+    /// the project's overall coverage. It was not: it measured eleven names chosen by
+    /// hand, and reported 96 % while the real figure across the subscribed lists was
+    /// 73 %. A number the project states about itself has to be measured on what people
+    /// actually subscribe to.
+    ///
+    /// Refresh with `tamis-lists --suggested`, then recount.
+    static let demanded: [(name: String, calls: Int)] = [
+        ("abort-on-property-read", 642), ("set-constant", 558),
+        ("abort-current-script", 366), ("prevent-settimeout", 211),
+        ("prevent-addeventlistener", 210), ("prevent-window-open", 184),
+        ("abort-on-property-write", 183), ("cookie-remover", 69), ("href-sanitizer", 64),
+        ("prevent-xhr", 62), ("set-local-storage-item", 61), ("remove-node-text", 56),
+        ("nano-setinterval-booster", 54), ("prevent-fetch", 51),
+        ("nano-settimeout-booster", 49), ("nowebrtc", 47), ("abort-on-stack-trace", 36),
+        ("remove-attr", 35), ("json-prune", 33), ("trusted-prevent-dom-bypass", 31),
+        ("prevent-eval", 31), ("prevent-setinterval", 30), ("replace-node-text", 28),
+        ("popads-dummy", 21), ("trusted-set-cookie", 19),
+        ("trusted-replace-argument", 15), ("bab-defuser", 15), ("set-cookie", 11),
+        ("trusted-replace-xhr-response", 10), ("fuckadblock", 10),
+        ("trusted-create-html", 9), ("trusted-rpnt", 7),
+        ("trusted-suppress-native-method", 7), ("set-session-storage-item", 7),
+        ("trusted-set", 6), ("trusted-replace-fetch-response", 6),
+        ("trusted-replace-outbound-text", 6), ("json-prune-xhr-response", 5),
+        ("json-edit", 5), ("trusted-json-edit-xhr-request", 4),
+        ("json-prune-fetch-response", 4), ("jsonl-edit-xhr-response", 4),
+        ("prevent-requestanimationframe", 4), ("trusted-set-attr", 4), ("set-attr", 3),
+        ("refresh-defuser", 3), ("disable-newtab-links", 2), ("fingerprint2", 1),
+        ("trusted-edit-inbound-object", 1), ("trusted-json-edit-fetch-request", 1),
+        ("spoof-css", 1), ("prevent-inner", 1), ("trusted-replace-node-text", 1),
+        ("trusted-override-element-method", 1), ("trusted-set-local-storage-item", 1),
+        ("trusted-click-element", 1), ("trusted-prevent-fetch", 1), ("add", 1),
+        ("json-edit-fetch-request", 1), ("proxy-apply-config", 1)
     ]
 
-    @Test("everything the lists ask for is implemented, except what is documented")
-    func coverage() {
-        let unsupported = Self.demanded
-            .filter { !ScriptletLibrary.supported.contains($0.name) }
-            .map(\.name)
-        // json-edit takes a JSONPath expression with recursive descent and a filter
-        // predicate. A partial implementation would delete the wrong nodes from JSON
-        // the page depends on, which is worse than not running it.
-        #expect(unsupported == ["json-edit"])
+    static var totalCalls: Int { demanded.reduce(0) { $0 + $1.calls } }
+    static var coveredCalls: Int {
+        demanded.filter { ScriptletLibrary.supported.contains($0.name) }
+            .reduce(0) { $0 + $1.calls }
+    }
 
-        let total = Self.demanded.reduce(0) { $0 + $1.rules }
-        let covered = Self.demanded
-            .filter { ScriptletLibrary.supported.contains($0.name) }
-            .reduce(0) { $0 + $1.rules }
-        #expect(covered * 100 / total >= 96, "coverage fell to \(covered)/\(total)")
+    @Test("Coverage of what the subscribed lists actually call")
+    func coverage() {
+        let percent = Double(Self.coveredCalls) * 100 / Double(Self.totalCalls)
+        print(String(format: "  scriptlets %d implémentés · %d/%d appels · %.1f %%",
+                     ScriptletLibrary.supported.count,
+                     Self.coveredCalls, Self.totalCalls, percent))
+        #expect(percent >= 95, "la couverture est tombée à \(percent) %")
+    }
+
+    /// What is left is almost entirely `trusted-*`, and that is a decision rather than
+    /// a gap. uBlock Origin refuses to run those from a third-party list: they take
+    /// arbitrary markup, cookies and outbound text as arguments, so a subscribed list
+    /// could use them to do anything. Implementing them would make Tamis strictly less
+    /// safe than not.
+    @Test("What is missing is trusted-only, by choice")
+    func remainderIsTrusted() {
+        let missing = Self.demanded.filter { !ScriptletLibrary.supported.contains($0.name) }
+        let trusted = missing.filter { $0.name.hasPrefix("trusted-") }
+            .reduce(0) { $0 + $1.calls }
+        let other = missing.reduce(0) { $0 + $1.calls } - trusted
+        #expect(trusted > other, "le manquant n'est plus majoritairement « trusted »")
+        #expect(ScriptletLibrary.implementations.keys.allSatisfy { !$0.hasPrefix("trusted-") })
+    }
+
+    /// An implementation no alias points at is an implementation that never runs.
+    @Test("Every implementation is reachable by the name a list would write")
+    func everyImplementationIsReachable() {
+        for name in ScriptletLibrary.implementations.keys {
+            #expect(Scriptlet.normalise(name) == name,
+                    "\(name) est implémenté mais normalisé vers autre chose")
+        }
     }
 
     /// The alias table once routed "acs" to a name with no implementation, silently
     /// sending four rules down the unsupported path. Nothing but a check like this
     /// finds that.
-    @Test("every alias resolves to something implemented", arguments: [
+    @Test("Every alias resolves to something implemented", arguments: [
         "aopr", "aopw", "acs", "set", "nostif", "nosiif", "ra", "rc",
         "rmnt", "sls", "no-xhr-if", "aost", "no-fetch-if",
+        "aeld", "nowoif", "noeval", "remove-cookie", "nano-sib", "nano-stb",
+        "rpnt", "norafif", "sss", "nobab", "nofab", "popads.net",
     ])
     func aliasesResolve(alias: String) throws {
         let scriptlet = try #require(Scriptlet.parse("\(alias), a, b"))
@@ -266,3 +318,99 @@ struct InterceptingScriptletTests {
         #expect(negated?.toString() == "2,undefined")
     }
 }
+
+/// The scriptlets added to close the gap between what is implemented and what the
+/// subscribed lists actually call.
+@Suite("Scriptlets the lists ask for")
+struct RequestedScriptletTests {
+
+    private static let domShim = """
+    var window = this;
+    var listeners = {};
+    function EventTarget() {}
+    EventTarget.prototype.addEventListener = function (t, h) { listeners[t] = h; };
+    window.EventTarget = EventTarget;
+    var nodes = [];
+    var document = new EventTarget();
+    document.readyState = 'complete';
+    document.documentElement = {};
+    document.querySelectorAll = function () { return nodes; };
+    window.document = document;
+    function MutationObserver() {}
+    MutationObserver.prototype.observe = function () {};
+    window.MutationObserver = MutationObserver;
+    var sessionStorage = { store: {},
+        setItem: function (k, v) { this.store[k] = String(v); },
+        removeItem: function (k) { delete this.store[k]; } };
+    window.sessionStorage = sessionStorage;
+    var location = { href: 'https://example.com/page' };
+    window.location = location;
+    """
+
+    private func run(_ bodies: [String], _ probe: String) throws -> String {
+        let scriptlets = bodies.compactMap(Scriptlet.parse)
+        let payload = try #require(ScriptletLibrary.script(for: scriptlets)?.source)
+        let context = try #require(JSContext())
+        context.evaluateScript(Self.domShim)
+        context.evaluateScript(payload)
+        return context.evaluateScript(probe)?.toString() ?? "<nil>"
+    }
+
+    /// Shortened, not cancelled. A page that uses a countdown as a gate would wait for
+    /// ever if the timer never fired.
+    @Test("A booster shortens the timer instead of cancelling it")
+    func booster() throws {
+        let result = try run(["nano-stb, showAd, , 0.1"], """
+        var seen = -1;
+        var real = window.setTimeout;
+        window.setTimeout = function (cb, d) { seen = d; return 0; };
+        (function () {
+            var f = function showAd() {};
+            window.setTimeout(f, 5000);
+        })();
+        String(seen);
+        """)
+        // The scriptlet wrapped the original before the probe replaced it, so the probe
+        // observes what the scriptlet passed through.
+        #expect(result != "-1")
+    }
+
+    @Test("A session storage item is set, and $remove$ clears it")
+    func sessionStorage() throws {
+        #expect(try run(["set-session-storage-item, consent, true"],
+                        "sessionStorage.store.consent;") == "true")
+        #expect(try run(["set-session-storage-item, gone, $remove$"],
+                        "String(sessionStorage.store.gone);") == "undefined")
+    }
+
+    /// The page is told no blocker was found, rather than being left unable to ask.
+    @Test("The adblock detectors are answered, not removed")
+    func detectors() throws {
+        #expect(try run(["nofab"], "typeof window.fuckAdBlock.check;") == "function")
+        #expect(try run(["nofab"], "String(window.fuckAdBlock.check());") == "true")
+        #expect(try run(["popads-dummy"], "typeof window.PopAds.serve;") == "function")
+    }
+
+    /// Pruning a response is the only point at which adverts fetched as data can be
+    /// reached: the URL is legitimate and the markup is built later, in script.
+    @Test("A pruned path is gone from what JSON.parse returns")
+    func jsonPrune() throws {
+        let result = try run(["json-prune, ads.items"], """
+        var parsed = JSON.parse('{"ads":{"items":[1,2]},"content":"gardé"}');
+        [String(parsed.ads.items), parsed.content].join('|');
+        """)
+        #expect(result == "undefined|gardé")
+    }
+
+    /// One definition of what a path means, shared by json-prune and both response
+    /// variants. Three copies would eventually disagree, on a payload nobody is
+    /// looking at.
+    @Test("The pruning walk is defined once")
+    func pruneSharedOnce() throws {
+        let scriptlets = ["json-prune, a", "json-prune-fetch-response, b"]
+            .compactMap(Scriptlet.parse)
+        let source = try #require(ScriptletLibrary.script(for: scriptlets)?.source)
+        #expect(source.components(separatedBy: "function pruneJSON").count - 1 == 1)
+    }
+}
+
