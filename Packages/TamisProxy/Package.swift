@@ -16,6 +16,7 @@ let package = Package(
         .package(path: "../TamisFilterEngine"),
         .package(path: "../TamisUserScripts"),
         .package(path: "../TamisLists"),
+        .package(path: "../TamisApps"),
     ],
     targets: [
         .target(
@@ -33,6 +34,7 @@ let package = Package(
                 "TamisFilterEngine",
                 "TamisUserScripts",
                 "TamisLists",
+                "TamisApps",
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -46,7 +48,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TamisProxyTests",
-            dependencies: ["TamisProxy", "TamisTLS", "TamisFilterEngine", "TamisUserScripts", "TamisLists", .product(name: "NIOSSL", package: "swift-nio-ssl"), .product(name: "NIOHTTP2", package: "swift-nio-http2"), .product(name: "NIOHTTP1", package: "swift-nio"), .product(name: "NIOConcurrencyHelpers", package: "swift-nio"), .product(name: "X509", package: "swift-certificates")],
+            dependencies: ["TamisProxy", "TamisTLS", "TamisFilterEngine", "TamisUserScripts", "TamisLists", "TamisApps", .product(name: "NIOSSL", package: "swift-nio-ssl"), .product(name: "NIOHTTP2", package: "swift-nio-http2"), .product(name: "NIOHTTP1", package: "swift-nio"), .product(name: "NIOConcurrencyHelpers", package: "swift-nio"), .product(name: "X509", package: "swift-certificates")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

@@ -3,6 +3,7 @@ import TamisFilterEngine
 import TamisLists
 import TamisProxy
 import TamisTLS
+import TamisApps
 import TamisUserScripts
 
 // Runs the proxy against real lists, on a port, changing nothing on the machine.
@@ -100,6 +101,8 @@ let events = EventSink { event in
     switch event {
     case .requestBlocked(let url, let rule):
         print("  BLOQUÉ    \(url.prefix(88))\n            ← \(rule.prefix(88))")
+    case .attributed(let host, let process, let bundleID):
+        print("  APP       \(host)  ← \(process)\(bundleID.map { " [\($0)]" } ?? " [sans bundle]")")
     case .tunnelled(let host, let reason):
         print("  TUNNEL    \(host)  (\(reason))")
     case .intercepted(let host, let negotiated):
@@ -134,7 +137,8 @@ let server = ProxyServer(
         engine: engine,
         cosmetic: cosmetic,
         userScripts: userScripts,
-        userStyles: userStyles
+        userStyles: userStyles,
+        attributor: ProcessAttributor()
     ),
     events: events
 )

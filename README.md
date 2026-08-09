@@ -115,8 +115,9 @@ keychain, no root:
 curl -x http://127.0.0.1:18080 --cacert /tmp/tamis/ca.pem https://example.com/
 ```
 
-It logs every decision: intercepted, blocked and by which rule, tunnelled and by which
-exclusion list, and which user scripts and styles reached which page.
+It logs every decision: which process opened the connection, intercepted, blocked and
+by which rule, tunnelled and by which exclusion list, and which user scripts and styles
+reached which page.
 
 `--scripts` is what makes a script enabled in the app actually run. The app manages the
 library; it does not yet carry traffic, so the two are joined by hand for now.
@@ -194,7 +195,7 @@ root:
 | `TamisTLS` | Certificate authority and short-lived leaf certificates |
 | `TamisUserScripts` | Tampermonkey scripts and UserCSS styles |
 | `TamisLists` | HTTPS exclusions, IDNA, list sources |
-| `TamisApps` | Browser discovery, engine characterisation, per-app policy |
+| `TamisApps` | Browser discovery, per-app policy, process attribution |
 | `TamisHistory` | The decision log: schema, batching, retention |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
@@ -236,11 +237,13 @@ root:
 | Scripts screen — filesystem tree, editor, install, revert | done |
 | User scripts and styles reaching real pages through the proxy | done |
 | Applications screen — browser discovery, three-state policy | done |
+| Attributing a connection to the application that opened it | done |
 | Decision log — schema, batching, retention, erase | done |
 | History screen — recurring domains, retention, erase | done |
 | Alerts screen — conditions derived, never stored | done |
 | Settings screen — locations, exclusions audit, allowlist audit | done |
-| Installing: system proxy, port 53, trusted authority | not started |
+| Installing: privileged daemon, PAC, port 53, trusted authority | not started |
+| Onboarding, uninstall, conflict detection, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |

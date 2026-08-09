@@ -4,6 +4,7 @@ import NIOPosix
 import NIOConcurrencyHelpers
 import NIOHTTP1
 import NIOSSL
+import TamisApps
 import TamisFilterEngine
 import TamisUserScripts
 
@@ -45,6 +46,10 @@ public final class ProxyServer: Sendable {
         /// Contents of `@require` URLs, fetched and cached by the app. A script whose
         /// libraries are missing is skipped rather than run half-initialised.
         public var resolvedRequires: [URL: String] = [:]
+        /// Set only when something depends on knowing which application opened a
+        /// connection. Absent means every connection is unattributed, which the policy
+        /// then handles by its own rules — it is not a degraded mode.
+        public var attributor: ProcessAttributor?
 
         public init(
             host: String = "127.0.0.1",
@@ -56,7 +61,8 @@ public final class ProxyServer: Sendable {
             userScripts: [UserScript] = [],
             userStyles: [UserStyle] = [],
             styleVariables: [String: [String: String]] = [:],
-            resolvedRequires: [URL: String] = [:]
+            resolvedRequires: [URL: String] = [:],
+            attributor: ProcessAttributor? = nil
         ) {
             self.host = host
             self.port = port
@@ -68,6 +74,7 @@ public final class ProxyServer: Sendable {
             self.userStyles = userStyles
             self.styleVariables = styleVariables
             self.resolvedRequires = resolvedRequires
+            self.attributor = attributor
         }
     }
 
@@ -131,6 +138,7 @@ public final class ProxyServer: Sendable {
                         userStyles: configuration.userStyles,
                         styleVariables: configuration.styleVariables,
                         resolvedRequires: configuration.resolvedRequires,
+                        attributor: configuration.attributor,
                         learn: learn
                     ),
                 ])
@@ -159,6 +167,10 @@ public final class EventSink: Sendable {
 
     public enum Event: Sendable {
         case tunnelled(host: String, reason: InterceptionPolicy.TunnelReason)
+        /// Which process opened a connection. `bundleID` is absent for a command-line
+        /// tool, which has none — a rule can only be written against a bundle
+        /// identifier, but the log is more useful naming the process either way.
+        case attributed(host: String, process: String, bundleID: String?)
         case intercepted(host: String, negotiated: String)
         /// The client refused our certificate: it pins. Remembered so the retry is
         /// tunnelled.
@@ -217,6 +229,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let userStyles: [UserStyle]
     private let styleVariables: [String: [String: String]]
     private let resolvedRequires: [URL: String]
+    private let attributor: ProcessAttributor?
     private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
     private var mode: Mode = .tunnel
@@ -234,6 +247,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         userStyles: [UserStyle],
         styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
+        attributor: ProcessAttributor?,
         learn: @escaping @Sendable (String) -> Void
     ) {
         self.policy = policy
@@ -246,6 +260,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.userStyles = userStyles
         self.styleVariables = styleVariables
         self.resolvedRequires = resolvedRequires
+        self.attributor = attributor
         self.learn = learn
     }
 
@@ -273,7 +288,22 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                 respond(context: context, status: .badRequest)
                 return
             }
-            switch policy.decision(forHost: target.host) {
+            // Which application opened this connection, when anything depends on the
+            // answer. The client's source port is the remote port of the connection we
+            // accepted — see ProcessAttributor for why this costs what it costs.
+            let attribution = attributor.flatMap { attributor in
+                context.channel.remoteAddress?.port.flatMap {
+                    attributor.attribute(localPort: UInt16($0))
+                }
+            }
+            if let attribution {
+                events.emit(.attributed(
+                    host: target.host, process: attribution.name, bundleID: attribution.bundleID
+                ))
+            }
+            let bundleID = attribution?.bundleID
+
+            switch policy.decision(forHost: target.host, bundleID: bundleID) {
             case .tunnel(let reason):
                 events.emit(.tunnelled(host: target.host, reason: reason))
                 mode = .tunnel
