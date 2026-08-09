@@ -47,7 +47,11 @@ public struct Installer: Sendable {
         self.isDryRun = isDryRun
     }
 
-    private var executables: URL { applicationURL.appending(path: "Contents/MacOS") }
+    /// Where the binaries are now.
+    private var bundled: URL { applicationURL.appending(path: "Contents/MacOS") }
+    /// Where the privileged ones will be, once installed. See
+    /// ``Installation/privilegedDirectory``.
+    private var installed: URL { Installation.privilegedDirectory }
 
     // MARK: Install
 
@@ -57,11 +61,23 @@ public struct Installer: Sendable {
     /// line is a command the user could type; nothing is hidden behind an API call they
     /// cannot inspect.
     public func privilegedScript(authorityPEM: URL) -> String {
-        let daemon = LaunchdJob.privilegedDaemon(executable: executables.appending(path: "tamisd"))
-        let resolver = LaunchdJob.resolver(executable: executables.appending(path: "tamis-dnsd"))
+        // The jobs point at the installed copies, never at the bundle.
+        let daemon = LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd"))
+        let resolver = LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd"))
+        let directory = installed.path(percentEncoded: false)
 
         return """
         set -e
+
+        # Les binaires privilégiés quittent le bundle : launchd refuse de lancer un
+        # démon root depuis un emplacement que l'utilisateur peut modifier. Effet de
+        # bord voulu — le service ne dépend plus de l'application, donc supprimer
+        # Tamis ne laisse pas le Mac avec un réglage proxy pointant vers rien.
+        mkdir -p '\(directory)'
+        cp '\(bundled.appending(path: "tamisd").path(percentEncoded: false))' '\(directory)/tamisd'
+        cp '\(bundled.appending(path: "tamis-dnsd").path(percentEncoded: false))' '\(directory)/tamis-dnsd'
+        chown -R root:wheel '\(directory)'
+        chmod 755 '\(directory)/tamisd' '\(directory)/tamis-dnsd'
 
         # Service privilégié : détient la clé de l'autorité, applique les réglages.
         cp '\(stagedPlist(for: daemon).path(percentEncoded: false))' '\(daemon.plistURL.path(percentEncoded: false))'
@@ -79,9 +95,10 @@ public struct Installer: Sendable {
         chmod 644 '\(resolver.plistURL.path(percentEncoded: false))'
         launchctl bootstrap \(resolver.domain) '\(resolver.plistURL.path(percentEncoded: false))'
 
-        # Réglage proxy — le seul changement qui redirige du trafic, appliqué en dernier.
+        # Réglages réseau — les seuls changements qui redirigent du trafic, en dernier.
         networksetup -listallnetworkservices | tail -n +2 | while read -r service; do
             networksetup -setautoproxyurl "$service" '\(Installation.pacURL(port: pacPort))'
+            networksetup -setdnsservers "$service" 127.0.0.1 ::1
         done
         """
     }
@@ -94,7 +111,7 @@ public struct Installer: Sendable {
         var outcomes: [Outcome] = []
         let support = Installation.supportDirectory
         let helper = LaunchdJob.pacHelper(
-            executable: executables.appending(path: "tamis-pac"), port: pacPort
+            executable: bundled.appending(path: "tamis-pac"), port: pacPort
         )
 
         outcomes.append(try write(
@@ -123,8 +140,8 @@ public struct Installer: Sendable {
         let staging = Installation.supportDirectory.appending(path: "staging")
         var outcomes: [Outcome] = []
         for job in [
-            LaunchdJob.privilegedDaemon(executable: executables.appending(path: "tamisd")),
-            LaunchdJob.resolver(executable: executables.appending(path: "tamis-dnsd")),
+            LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd")),
+            LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd")),
         ] {
             outcomes.append(try write(
                 id: "staged-\(job.label)", data: try job.plistData(),

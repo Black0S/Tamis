@@ -126,3 +126,63 @@ struct InstallerTests {
         #expect(parsed?["Label"] as? String == Installation.resolverLabel)
     }
 }
+
+/// The requirement that decides whether the daemon starts at all.
+@Suite("Privileged binaries leave the bundle")
+struct PrivilegedLocationTests {
+
+    private let installer = Installer(
+        applicationURL: URL(fileURLWithPath: "/Applications/Tamis.app")
+    )
+
+    /// launchd refuses to start a root daemon from a location the user can write to,
+    /// and `/Applications` is one. A job pointing into the bundle fails at install
+    /// time, with an error that says nothing about why.
+    @Test("No launchd job points into the application bundle")
+    func jobsPointOutsideTheBundle() throws {
+        for job in [
+            LaunchdJob.privilegedDaemon(
+                executable: Installation.privilegedDirectory.appending(path: "tamisd")),
+            LaunchdJob.resolver(
+                executable: Installation.privilegedDirectory.appending(path: "tamis-dnsd")),
+        ] {
+            let arguments = try PropertyListSerialization.propertyList(
+                from: try job.plistData(), options: [], format: nil
+            ) as? [String: Any]
+            let path = try #require((arguments?["ProgramArguments"] as? [String])?.first)
+            #expect(!path.contains(".app/"), "\(job.label) est lancé depuis le bundle")
+            #expect(path.hasPrefix(Installation.privilegedDirectory.path(percentEncoded: false)))
+        }
+    }
+
+    @Test("The script copies the binaries out and makes them root-owned")
+    func scriptCopiesBinaries() {
+        let script = installer.privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        let directory = Installation.privilegedDirectory.path(percentEncoded: false)
+        #expect(script.contains("cp '/Applications/Tamis.app/Contents/MacOS/tamisd' '\(directory)/tamisd'"))
+        #expect(script.contains("chown -R root:wheel '\(directory)'"))
+        #expect(script.contains("chmod 755"))
+    }
+
+    /// The copies are outside the bundle, so deleting the application cannot remove
+    /// them — which means the uninstall has to, or they stay for ever.
+    @Test("The uninstall removes the copies it made")
+    func uninstallRemovesCopies() {
+        let daemon = try? #require(Installation.plan().first { $0.id == "daemon" })
+        #expect(daemon?.undoCommand.contains(Installation.privilegedDirectory.path(percentEncoded: false)) == true)
+        #expect(daemon?.paths.contains(Installation.privilegedDirectory) == true)
+    }
+
+    /// Pointing DNS at Tamis is what makes the resolver cover the whole machine, and
+    /// leaving it pointed there after uninstalling would leave a Mac that cannot
+    /// resolve anything.
+    @Test("DNS is set on install and cleared on uninstall")
+    func dnsIsSetAndCleared() throws {
+        let script = installer.privilegedScript(authorityPEM: URL(fileURLWithPath: "/tmp/ca.pem"))
+        #expect(script.contains("networksetup -setdnsservers \"$service\" 127.0.0.1 ::1"))
+
+        let proxy = try #require(Installation.plan().first { $0.id == "system-proxy" })
+        #expect(proxy.undoCommand.contains("-setdnsservers"))
+        #expect(proxy.undoCommand.contains("empty"))
+    }
+}

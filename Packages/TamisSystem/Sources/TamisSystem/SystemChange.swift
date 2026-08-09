@@ -67,6 +67,18 @@ public enum Installation {
         "http://127.0.0.1:\(port)/tamis.pac"
     }
 
+    /// Where the privileged binaries live once installed.
+    ///
+    /// Not inside the application bundle, and that is not tidiness: launchd refuses to
+    /// start a root daemon from a location the user can write to, and `/Applications`
+    /// is one. Copying the binaries out is what makes the daemon start at all — and it
+    /// has a second consequence the design depends on: the daemon becomes independent
+    /// of the bundle, so deleting the application cannot leave the machine with its
+    /// proxy setting pointing at nothing.
+    public static let privilegedDirectory = URL(
+        fileURLWithPath: "/Library/Application Support/Tamis"
+    )
+
     public static var supportDirectory: URL {
         (try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
@@ -90,9 +102,13 @@ public enum Installation {
                       + "aucun contenu réseau : c'est ce qui permet au reste de Tamis "
                       + "de ne jamais tourner en root.",
                 undoCommand: "sudo launchctl bootout system/\(daemonLabel); "
-                           + "sudo rm /Library/LaunchDaemons/\(daemonLabel).plist",
+                           + "sudo rm /Library/LaunchDaemons/\(daemonLabel).plist; "
+                           + "sudo rm -rf '\(privilegedDirectory.path(percentEncoded: false))'",
                 scope: .administrator,
-                paths: [URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist")],
+                paths: [
+                    URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist"),
+                    privilegedDirectory,
+                ],
                 detect: {
                     FileManager.default.fileExists(
                         atPath: "/Library/LaunchDaemons/\(daemonLabel).plist"
@@ -157,8 +173,9 @@ public enum Installation {
                 id: "system-proxy",
                 title: "Réglage proxy du système",
                 effect: "Indique à macOS d'utiliser la configuration automatique servie "
-                      + "par Tamis. C'est le seul changement qui redirige réellement du "
-                      + "trafic, et c'est pour cela qu'il est appliqué en dernier.",
+                      + "par Tamis, et de résoudre les noms via 127.0.0.1. Ce sont les "
+                      + "seuls changements qui redirigent réellement du trafic, et c'est "
+                      + "pour cela qu'ils sont appliqués en dernier.",
                 // Scoped to what Tamis set. Turning auto-proxy off everywhere would
                 // also undo a configuration somebody else made — including one the
                 // user had before installing — and an uninstall that removes another
@@ -166,7 +183,8 @@ public enum Installation {
                 undoCommand: "networksetup -listallnetworkservices | tail -n +2 | "
                            + "while read -r s; do "
                            + "case \"$(networksetup -getautoproxyurl \"$s\" | head -1)\" in "
-                           + "*tamis*) sudo networksetup -setautoproxystate \"$s\" off ;; "
+                           + "*tamis*) sudo networksetup -setautoproxystate \"$s\" off; "
+                           + "sudo networksetup -setdnsservers \"$s\" empty ;; "
                            + "esac; done",
                 scope: .administrator,
                 // Only ours counts as applied, for the same reason.
