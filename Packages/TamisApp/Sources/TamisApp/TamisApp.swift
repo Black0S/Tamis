@@ -4,12 +4,22 @@ import SwiftUI
 struct TamisApp: App {
     @State private var state = AppState()
     @State private var lists = FilterListsModel.makeDefault()
+    @State private var engines: EngineModel
+
+    init() {
+        let lists = FilterListsModel.makeDefault()
+        let engines = EngineModel(manager: lists.manager)
+        lists.onListsChanged = { [engines] in engines.rebuild() }
+        _lists = State(initialValue: lists)
+        _engines = State(initialValue: engines)
+    }
 
     var body: some Scene {
         Window("Tamis", id: "main") {
             MainWindow()
                 .environment(state)
                 .environment(lists)
+                .environment(engines)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)
@@ -25,6 +35,7 @@ struct TamisApp: App {
             MenuBarPanel()
                 .environment(state)
                 .environment(lists)
+                .environment(engines)
         } label: {
             Image(systemName: state.protection.symbolName)
         }

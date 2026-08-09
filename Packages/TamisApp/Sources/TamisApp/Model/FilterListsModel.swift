@@ -25,12 +25,17 @@ final class FilterListsModel {
     }
 
     let catalog: FilterListCatalog
-    private let manager: ListManager
+    let manager: ListManager
 
     private(set) var rows: [Row] = []
     var search = ""
     /// `nil` shows every category at once.
     var category: FilterListCatalog.Category?
+
+    /// Called whenever the enabled set changes, so the engines can be rebuilt.
+    /// A closure rather than a reference, so this model stays unaware of what is
+    /// downstream of it.
+    var onListsChanged: @MainActor () -> Void = {}
 
     /// Set when a download is refused. Kept on screen until dismissed: a list that
     /// silently failed to enable is a list the user believes is protecting them.
@@ -43,8 +48,12 @@ final class FilterListsModel {
     }
 
     /// The manager's own root, so the app and the command-line tools share a state.
+    ///
+    /// `TAMIS_STORE` redirects it, which is how the app can be driven against a
+    /// throwaway set of lists without touching the one the user actually has.
     static func makeDefault() -> FilterListsModel {
-        let root = (try? ListStore.defaultRoot())
+        let root = ProcessInfo.processInfo.environment["TAMIS_STORE"].map(URL.init(fileURLWithPath:))
+            ?? (try? ListStore.defaultRoot())
             ?? URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "Tamis/Lists")
         let store = ListStore(root: root)
         return FilterListsModel(manager: ListManager(store: store))
@@ -112,9 +121,11 @@ final class FilterListsModel {
             rows[index].entryCount = nil
             rows[index].updatedAt = nil
             rows[index].failure = nil
+            onListsChanged()
             return
         }
         await enable(id, at: index)
+        onListsChanged()
     }
 
     private func enable(_ id: String, at index: Int) async {
@@ -146,11 +157,13 @@ final class FilterListsModel {
             else { continue }
             await enable(entry.id, at: index)
         }
+        onListsChanged()
     }
 
     func refreshAll() async {
         let results = await manager.refreshAll()
         await reload()
+        onListsChanged()
         let failed = results.filter { if case .anomaly = $0.value { true } else { false } }
         if !failed.isEmpty {
             lastError = failed.count == 1
@@ -163,6 +176,7 @@ final class FilterListsModel {
         do {
             _ = try await manager.add(url: url, name: name)
             await reload()
+            onListsChanged()
         } catch {
             lastError = "\(name) — \(Self.describe(error))"
         }

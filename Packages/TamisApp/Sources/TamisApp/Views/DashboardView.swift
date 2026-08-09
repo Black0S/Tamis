@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
+    @Environment(EngineModel.self) private var engines
     /// Set by the window, so the empty state can send the user to the Filters screen
     /// instead of describing where it is.
     var onChooseLists: () -> Void = {}
@@ -35,6 +36,7 @@ struct DashboardView: View {
                 }
 
                 if lists.enabledCount > 0 { listsRow }
+                if lists.enabledCount > 0 { engineRow }
                 dnsRow
                 Spacer(minLength: 0)
             }
@@ -68,6 +70,40 @@ struct DashboardView: View {
                 Text("\(lists.enabledCount) activées · \(lists.totalEntryCount.formatted()) règles")
                     .foregroundStyle(.secondary).monospacedDigit()
                 Button("Gérer…", action: onChooseLists).buttonStyle(.link)
+            }
+            .padding(4)
+        }
+    }
+
+    /// What is actually compiled, which is not the same question as what is
+    /// subscribed. A list downloaded but not yet built blocks nothing, and saying
+    /// "11 lists" while the engines are empty would be a claim of protection.
+    @ViewBuilder
+    private var engineRow: some View {
+        GroupBox {
+            HStack {
+                Label("Moteurs", systemImage: "gearshape.2")
+                Spacer()
+                switch engines.state {
+                case .idle:
+                    Text("pas encore compilés").foregroundStyle(.secondary)
+                case .building:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("compilation…").foregroundStyle(.secondary)
+                    }
+                case .ready(let compiled):
+                    Text("\(compiled.networkRules.formatted()) réseau · "
+                         + "\(compiled.cosmeticRules.formatted()) cosmétiques · "
+                         + "\(compiled.blockedDomains.formatted()) domaines")
+                        .foregroundStyle(.secondary).monospacedDigit()
+                        // What is not enforced belongs next to what is. A coverage
+                        // figure with nothing subtracted from it is a claim, not a
+                        // measurement.
+                        .help("\(compiled.notEnforced.formatted()) règles comprises mais "
+                              + "non appliquées comme blocage. Compilé en "
+                              + String(format: "%.1f s", compiled.duration) + ".")
+                }
             }
             .padding(4)
         }
@@ -136,6 +172,7 @@ struct StatTile: View {
     DashboardView()
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
+        .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
         .frame(width: 820, height: 600)
 }
 
@@ -143,5 +180,6 @@ struct StatTile: View {
     DashboardView()
         .environment(AppState())
         .environment(FilterListsModel.makeDefault())
+        .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
         .frame(width: 820, height: 600)
 }

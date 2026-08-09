@@ -107,8 +107,11 @@ Scripts/bundle-app.sh && open build/Tamis.app
 ```
 
 Builds `Tamis.app` and signs it ad hoc — no certificate, no account. The Filters screen
-is live: it browses all 165 lists, downloads what you enable, and stores it under
-`~/Library/Application Support/Tamis`. Nothing else is wired to the engines yet.
+browses all 165 lists, downloads what you enable into
+`~/Library/Application Support/Tamis`, and compiles it into the engines — the dashboard
+reports what came out. Nothing carries live traffic yet.
+
+`TAMIS_STORE=/some/path` points it at a throwaway set of lists instead.
 
 ## Build and test
 
@@ -176,6 +179,8 @@ root:
 | List downloading, update guardrails, diffs, rollback | done |
 | Subscriptions, refresh, compiling into both engines | done |
 | Filters screen — browse, enable, refresh, add by URL | done |
+| Compiling the enabled lists into the engines, in the app | done |
+| Connecting the engines to live traffic | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |

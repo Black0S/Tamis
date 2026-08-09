@@ -9,6 +9,7 @@ import SwiftUI
 struct MainWindow: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
+    @Environment(EngineModel.self) private var engines
     @State private var selection: Section? = .dashboard
 
     enum Section: String, CaseIterable, Identifiable, Hashable {
@@ -70,7 +71,10 @@ struct MainWindow: View {
             }
         }
         // Before anything is shown, so no screen opens on a state it invented.
-        .task { await lists.reload() }
+        .task {
+            await lists.reload()
+            engines.rebuild()
+        }
     }
 
     @ViewBuilder
@@ -104,5 +108,6 @@ struct PlaceholderView: View {
     MainWindow()
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
+        .environment(EngineModel(manager: FilterListsModel.makeDefault().manager))
         .frame(width: 1000, height: 680)
 }
