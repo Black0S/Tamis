@@ -10,10 +10,11 @@ hides what a blocked advert would have left behind.
 It depends on **no Apple developer account**: no entitlement, no Developer ID, no
 approval. Anyone who clones this repository gets a working build.
 
-> **Status: not yet a working install.** The engines, the DNS layer, the proxy and the
-> list management all work and are tested, and the app builds and runs — but nothing
-> installs itself yet, so no traffic passes through it. Everything below is runnable
-> today. See [Where this stands](#where-this-stands).
+> **Status: everything is written; nothing has been installed.** The engines, both
+> layers, the list management, all eight screens, the first-run flow and the installer
+> are done and tested — 534 tests from a fresh clone. What has never happened is an
+> actual install on a Mac: no proxy setting written, no authority trusted, no port 53
+> taken. Everything below runs today without any of that.
 
 ---
 
@@ -268,7 +269,6 @@ root:
 | History screen — recurring domains, retention, erase | done |
 | Alerts screen — conditions derived, never stored | done |
 | Settings screen — locations, exclusions audit, allowlist audit | done |
-| Installing: privileged daemon, PAC, port 53, trusted authority | not started |
 | Preflight — conflicts, existing proxy, stale authorities, VPN | done |
 | PAC — no dnsResolve, exclusions direct, fail-open | done |
 | Installation plan — what changes, what undoes it | done |
@@ -278,10 +278,9 @@ root:
 | Onboarding — nine screens, one password, nothing left behind | done |
 | Update check — reports, never installs | done |
 | Privileged daemon holding the authority's key | done |
-| Running a real install | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
-| Onboarding, uninstall, privileged daemon | not started |
+| **Running a real install on a Mac** | **not started — the only one left** |
 
 ## Design notes
 
