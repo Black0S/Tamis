@@ -196,6 +196,9 @@ root:
 ## What Tamis will never do
 
 - **Send anything anywhere.** No telemetry, not even a crash report.
+- **Show a number it cannot measure.** There is no "data saved" figure: a blocked
+  request is never fetched, so its size is unknown, and every such figure is an
+  estimate presented as a measurement.
 - **Keep the URL of a request it allowed.** Query strings carry session tokens, and
   they answer no question anyone asks later. Full URLs are stored for blocks only —
   enforced when the event is constructed, not by convention.
@@ -230,6 +233,8 @@ root:
 | Applications screen — browser discovery, three-state policy | done |
 | Decision log — schema, batching, retention, erase | done |
 | History screen — recurring domains, retention, erase | done |
+| Alerts screen — conditions derived, never stored | done |
+| Settings screen | not started |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |

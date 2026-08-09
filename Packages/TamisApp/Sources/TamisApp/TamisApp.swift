@@ -9,6 +9,7 @@ struct TamisApp: App {
     @State private var scripts = ScriptsModel.makeDefault()
     @State private var applications = ApplicationsModel()
     @State private var history = HistoryModel.makeDefault()
+    @State private var alerts = AlertsModel()
 
     init() {
         let lists = FilterListsModel.makeDefault()
@@ -35,6 +36,7 @@ struct TamisApp: App {
                 .environment(scripts)
                 .environment(applications)
                 .environment(history)
+                .environment(alerts)
                 // Wide enough that the sidebar and a table can coexist without either
                 // being useless.
                 .frame(minWidth: 900, minHeight: 600)
@@ -52,6 +54,7 @@ struct TamisApp: App {
                 .environment(lists)
                 .environment(engines)
                 .environment(resolver)
+                .environment(history)
         } label: {
             Image(systemName: state.protection.symbolName)
         }

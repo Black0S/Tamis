@@ -10,6 +10,10 @@ struct MainWindow: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
     @Environment(EngineModel.self) private var engines
+    @Environment(AlertsModel.self) private var alertsModel
+    @Environment(ResolverModel.self) private var resolver
+    @Environment(ScriptsModel.self) private var scripts
+    @Environment(HistoryModel.self) private var history
     @State private var selection: Section? = .dashboard
 
     enum Section: String, CaseIterable, Identifiable, Hashable {
@@ -71,6 +75,7 @@ struct MainWindow: View {
             case .scripts:          ScriptsView()
             case .applications:     ApplicationsView()
             case .history:          HistoryView()
+            case .alerts:           AlertsView(onOpen: { selection = $0 })
             case .some(let section): PlaceholderView(section: section)
             }
         }
@@ -81,11 +86,19 @@ struct MainWindow: View {
         }
     }
 
+    /// Derived, like the alerts themselves, so the badge cannot outlive what it counts.
+    private var outstandingAlerts: Int {
+        alertsModel.alerts(
+            lists: lists, engines: engines, resolver: resolver,
+            scripts: scripts, history: history
+        ).count { $0.severity != .info }
+    }
+
     @ViewBuilder
     private func rows(_ items: [Section]) -> some View {
         ForEach(items) { item in
             Label(item.title, systemImage: item.symbol)
-                .badge(item == .alerts ? state.alerts.count : 0)
+                .badge(item == .alerts ? outstandingAlerts : 0)
                 .tag(item)
         }
     }
@@ -117,5 +130,6 @@ struct PlaceholderView: View {
         .environment(ScriptsModel.makeDefault())
         .environment(ApplicationsModel())
         .environment(HistoryModel.makeDefault())
+        .environment(AlertsModel())
         .frame(width: 1000, height: 680)
 }

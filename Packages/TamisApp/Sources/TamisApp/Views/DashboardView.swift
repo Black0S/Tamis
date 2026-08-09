@@ -5,6 +5,7 @@ struct DashboardView: View {
     @Environment(FilterListsModel.self) private var lists
     @Environment(EngineModel.self) private var engines
     @Environment(ResolverModel.self) private var resolver
+    @Environment(HistoryModel.self) private var history
     /// Set by the window, so the empty state can send the user to the Filters screen
     /// instead of describing where it is.
     var onChooseLists: () -> Void = {}
@@ -18,21 +19,25 @@ struct DashboardView: View {
                     NoListsNotice(onChooseLists: onChooseLists)
                 }
 
+                // Three counts that are read from the log, and no fourth that is not.
+                // "Data saved" is not measurable: a blocked request is never fetched,
+                // so its size is unknown, and every figure for it is an estimate
+                // presented as a measurement.
                 HStack(spacing: 16) {
                     StatTile(
-                        value: state.blockedToday.formatted(),
+                        value: history.statistics.blocked.formatted(),
                         caption: "requêtes bloquées",
                         symbol: "hand.raised"
                     )
                     StatTile(
-                        value: Formatting.bytes(state.bytesSaved),
-                        caption: "données économisées",
-                        symbol: "arrow.down.circle"
+                        value: history.statistics.tunnelled.formatted(),
+                        caption: "flux non déchiffrés",
+                        symbol: "lock"
                     )
                     StatTile(
-                        value: state.unfilteredFlows.formatted(),
-                        caption: "flux non filtrés",
-                        symbol: "questionmark.circle"
+                        value: history.statistics.distinctDomains.formatted(),
+                        caption: "domaines vus",
+                        symbol: "globe"
                     )
                 }
 
@@ -44,6 +49,7 @@ struct DashboardView: View {
             .padding(24)
         }
         .navigationTitle("Tableau de bord")
+        .task { await history.reload() }
     }
 
     private var header: some View {

@@ -8,6 +8,7 @@ struct MenuBarPanel: View {
     @Environment(AppState.self) private var state
     @Environment(FilterListsModel.self) private var lists
     @Environment(ResolverModel.self) private var resolver
+    @Environment(HistoryModel.self) private var history
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -49,16 +50,16 @@ struct MenuBarPanel: View {
     private var todayRow: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(state.blockedToday.formatted())
+                Text(history.statistics.blocked.formatted())
                     .font(.title2).fontWeight(.medium).monospacedDigit()
-                Text("bloquées aujourd'hui")
+                Text("bloquées")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(Formatting.bytes(state.bytesSaved))
+                Text(history.statistics.distinctDomains.formatted())
                     .font(.title2).fontWeight(.medium).monospacedDigit()
-                Text("économisés")
+                Text("domaines")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
@@ -129,6 +130,7 @@ private struct MenuRowLabelStyle: LabelStyle {
         .environment(AppState.previewRunning())
         .environment(FilterListsModel.makeDefault())
         .environment(ResolverModel())
+        .environment(HistoryModel.makeDefault())
 }
 
 #Preview("Premier lancement") {
@@ -136,4 +138,5 @@ private struct MenuRowLabelStyle: LabelStyle {
         .environment(AppState())
         .environment(FilterListsModel.makeDefault())
         .environment(ResolverModel())
+        .environment(HistoryModel.makeDefault())
 }
