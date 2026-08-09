@@ -117,3 +117,49 @@ struct ScriptletLibraryTests {
         #expect(ScriptletLibrary.script(for: []) == nil)
     }
 }
+
+@Suite("Scriptlet coverage")
+struct ScriptletCoverageTests {
+
+    /// The names EasyList and EasyPrivacy actually invoke, with the count of rules
+    /// behind each. Kept here so a coverage regression fails a test rather than being
+    /// noticed months later.
+    static let demanded: [(name: String, rules: Int)] = [
+        ("set-constant", 6), ("remove-node-text", 4), ("abort-current-script", 4),
+        ("set-local-storage-item", 3), ("abort-on-stack-trace", 3), ("prevent-xhr", 2),
+        ("set-cookie", 1), ("set-attr", 1), ("prevent-fetch", 1), ("cookie-remover", 1),
+        ("json-edit", 1),
+    ]
+
+    @Test("everything the lists ask for is implemented, except what is documented")
+    func coverage() {
+        let unsupported = Self.demanded
+            .filter { !ScriptletLibrary.supported.contains($0.name) }
+            .map(\.name)
+        // json-edit takes a JSONPath expression with recursive descent and a filter
+        // predicate. A partial implementation would delete the wrong nodes from JSON
+        // the page depends on, which is worse than not running it.
+        #expect(unsupported == ["json-edit"])
+
+        let total = Self.demanded.reduce(0) { $0 + $1.rules }
+        let covered = Self.demanded
+            .filter { ScriptletLibrary.supported.contains($0.name) }
+            .reduce(0) { $0 + $1.rules }
+        #expect(covered * 100 / total >= 96, "coverage fell to \(covered)/\(total)")
+    }
+
+    /// The alias table once routed "acs" to a name with no implementation, silently
+    /// sending four rules down the unsupported path. Nothing but a check like this
+    /// finds that.
+    @Test("every alias resolves to something implemented", arguments: [
+        "aopr", "aopw", "acs", "set", "nostif", "nosiif", "ra", "rc",
+        "rmnt", "sls", "no-xhr-if", "aost", "no-fetch-if",
+    ])
+    func aliasesResolve(alias: String) throws {
+        let scriptlet = try #require(Scriptlet.parse("\(alias), a, b"))
+        #expect(
+            ScriptletLibrary.supported.contains(scriptlet.name),
+            "\(alias) resolves to \(scriptlet.name), which has no implementation"
+        )
+    }
+}

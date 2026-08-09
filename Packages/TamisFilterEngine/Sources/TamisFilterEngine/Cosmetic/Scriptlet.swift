@@ -48,6 +48,8 @@ public struct Scriptlet: Sendable, Equatable {
         case "rmnt":  return "remove-node-text"
         case "sls", "set-local-storage-item": return "set-local-storage-item"
         case "no-xhr-if", "prevent-xhr": return "prevent-xhr"
+        case "aost":  return "abort-on-stack-trace"
+        case "no-fetch-if": return "prevent-fetch"
         case "rc":    return "remove-class"
         default:      return name
         }

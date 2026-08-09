@@ -296,6 +296,141 @@ public enum ScriptletLibrary {
         window.XMLHttpRequest.prototype = Original.prototype;
         """#,
 
+        // Some scripts only misbehave when called from a particular place; this throws
+        // on the read only when the call stack matches, leaving the page's own use of
+        // the same property working.
+        "abort-on-stack-trace": #"""
+        var chain = args[0], needle = args[1] || "";
+        if (!chain) return;
+        var matches = function (stack) {
+          if (needle === "") return true;
+          if (needle.charAt(0) === "/" && needle.lastIndexOf("/") > 0) {
+            var end = needle.lastIndexOf("/");
+            try { return new RegExp(needle.slice(1, end), needle.slice(end + 1)).test(stack); }
+            catch (e) { return false; }
+          }
+          return stack.indexOf(needle) !== -1;
+        };
+        var parts = chain.split("."), owner = window;
+        for (var i = 0; i < parts.length - 1 && owner; i++) owner = owner[parts[i]];
+        if (!owner) return;
+        var name = parts[parts.length - 1];
+        var stored = owner[name];
+        try {
+          Object.defineProperty(owner, name, {
+            get: function () {
+              var stack = "";
+              try { throw new Error(); } catch (e) { stack = e.stack || ""; }
+              if (matches(stack)) throw new ReferenceError(Math.random().toString(36).slice(2));
+              return stored;
+            },
+            set: function (v) { stored = v; }
+          });
+        } catch (e) {}
+        """#,
+
+        "set-cookie": #"""
+        var name = args[0], raw = args[1], path = args[2] || "/";
+        if (!name) return;
+        var vocabulary = {
+          "true": "true", "false": "false", "yes": "yes", "no": "no",
+          "ok": "ok", "accept": "accept", "reject": "reject",
+          "allow": "allow", "deny": "deny", "0": "0", "1": "1"
+        };
+        var value = Object.prototype.hasOwnProperty.call(vocabulary, raw) ? vocabulary[raw] : raw;
+        if (value === undefined) return;
+        try {
+          document.cookie = encodeURIComponent(name) + "=" + encodeURIComponent(value)
+            + "; path=" + path + "; expires=Tue, 19 Jan 2038 03:14:07 GMT";
+        } catch (e) { return; }
+        // A consent cookie only takes effect on the next load, so lists ask for one.
+        if (args.indexOf("reload") !== -1) {
+          try {
+            var key = "tamis-reloaded-" + name;
+            if (!sessionStorage.getItem(key)) {
+              sessionStorage.setItem(key, "1");
+              location.reload();
+            }
+          } catch (e) {}
+        }
+        """#,
+
+        // The value may name another attribute in brackets, meaning "copy from there" —
+        // which is how lazy-loading images are forced to reveal their real source.
+        "set-attr": #"""
+        var selector = args[0], attribute = args[1], raw = args[2] || "";
+        if (!selector || !attribute) return;
+        var run = function () {
+          var nodes;
+          try { nodes = document.querySelectorAll(selector); } catch (e) { return; }
+          for (var i = 0; i < nodes.length; i++) {
+            var value = raw;
+            if (raw.charAt(0) === "[" && raw.charAt(raw.length - 1) === "]") {
+              value = nodes[i].getAttribute(raw.slice(1, -1));
+              if (value === null) continue;
+            }
+            if (nodes[i].getAttribute(attribute) !== value) nodes[i].setAttribute(attribute, value);
+          }
+        };
+        run();
+        try {
+          new MutationObserver(run).observe(document.documentElement, {
+            childList: true, subtree: true, attributes: true
+          });
+        } catch (e) {}
+        """#,
+
+        "prevent-fetch": #"""
+        var needle = args[0] || "";
+        var original = window.fetch;
+        if (typeof original !== "function") return;
+        var shouldBlock = function (input) {
+          if (needle === "" || needle === "*") return true;
+          var url = typeof input === "string" ? input : (input && input.url) || "";
+          return String(url).indexOf(needle) !== -1;
+        };
+        window.fetch = function (input) {
+          if (!shouldBlock(input)) return original.apply(window, arguments);
+          // An empty success rather than a rejection: a page that sees fetch fail often
+          // retries forever or reports itself as broken.
+          return Promise.resolve(new Response("", { status: 200, statusText: "OK" }));
+        };
+        """#,
+
+        "cookie-remover": #"""
+        var name = args[0];
+        if (!name) return;
+        var matches = function (candidate) {
+          if (name.charAt(0) === "/" && name.lastIndexOf("/") > 0) {
+            var end = name.lastIndexOf("/");
+            try { return new RegExp(name.slice(1, end), name.slice(end + 1)).test(candidate); }
+            catch (e) { return false; }
+          }
+          return candidate === name;
+        };
+        var remove = function () {
+          var cookies = document.cookie.split(";");
+          for (var i = 0; i < cookies.length; i++) {
+            var key = cookies[i].split("=")[0].trim();
+            if (!key || !matches(key)) continue;
+            // The path and domain a cookie was set with are not readable, so every
+            // plausible scope is cleared.
+            var host = location.hostname.split(".");
+            var domains = [""];
+            for (var d = 0; d < host.length - 1; d++) domains.push("; domain=." + host.slice(d).join("."));
+            var paths = ["/", location.pathname];
+            for (var p = 0; p < paths.length; p++) {
+              for (var g = 0; g < domains.length; g++) {
+                document.cookie = key + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path="
+                  + paths[p] + domains[g];
+              }
+            }
+          }
+        };
+        remove();
+        try { setInterval(remove, 1000); } catch (e) {}
+        """#,
+
         "json-prune": #"""
         var toPrune = (args[0] || "").split(" ").filter(Boolean);
         if (!toPrune.length) return;
