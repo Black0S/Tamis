@@ -22,8 +22,10 @@ Safari no longer has uBlock Origin — support was dropped. Chrome's Manifest V3
 only uBO Lite, with a hard cap on rules. Tamis sits below the browser instead, so it is
 unaffected by either, and covers the applications an extension can never reach.
 
-Measured against EasyList and EasyPrivacy: **115 340 network rules** and **24 176
-cosmetic rules** parsed with no errors, matching in **133 µs** per request.
+Measured against EasyList and EasyPrivacy: **115 532 network rules** and **24 177
+cosmetic rules** parsed with no errors, matching in **131 µs** per request. Against the
+whole suggested selection — eleven lists, 456 183 lines — 300 841 network rules and
+273 739 blocked domains.
 
 What it does not do: on Firefox, where uBlock Origin still runs unrestricted, uBO's
 cosmetic filtering is finer than injecting from outside the page. Tamis is strongest
@@ -110,7 +112,7 @@ behind them yet.
 ## Build and test
 
 ```bash
-for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts TamisProxy; do
+for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts TamisLists TamisProxy; do
   swift test --package-path "Packages/$package"
 done
 ```
