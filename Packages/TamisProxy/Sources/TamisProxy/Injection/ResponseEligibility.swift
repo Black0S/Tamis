@@ -28,10 +28,11 @@ public enum ResponseEligibility {
 
     /// Content encodings the pipeline can actually decode.
     ///
-    /// Brotli and zstd are absent on purpose. Rather than link a C decompressor into a
-    /// process that parses hostile input, the request advertises only what NIO already
-    /// implements — see ``rewriteAcceptEncoding(_:)``.
-    static let decodableEncodings: Set<String> = ["gzip", "deflate", "x-gzip", "identity"]
+    /// Brotli is included because Apple's `Compression` framework implements it, so
+    /// supporting it costs no third-party C decompressor in a process whose entire
+    /// input is hostile. zstd stays out: the framework does not implement it, and no
+    /// measured origin chose it over brotli or gzip.
+    static let decodableEncodings: Set<String> = ["gzip", "deflate", "x-gzip", "br", "identity"]
 
     public static func verdict(
         for head: HTTPResponseHead,
@@ -78,13 +79,13 @@ public enum ResponseEligibility {
 
     /// Narrows what the origin may send to what we can decode.
     ///
-    /// The alternative — asking for `identity` — would move whole uncompressed
-    /// documents across the real network. The alternative in the other direction —
-    /// accepting brotli and zstd — means linking a C decompressor into a process whose
-    /// entire input is hostile. Asking for gzip is the middle: a format NIO already
-    /// implements, at a cost of roughly fifteen percent on HTML alone.
+    /// Only zstd is dropped. An earlier version also dropped brotli, to avoid linking a
+    /// C decompressor into a process that parses hostile input — but Apple's
+    /// `Compression` framework implements brotli, so the reason evaporated. Measuring
+    /// the cost of that assumption is what made it worth revisiting: on origins that do
+    /// serve brotli it ran from +13% to +50% on the document, and +191% on one.
     public static func rewriteAcceptEncoding(_ headers: inout HTTPHeaders) {
-        headers.replaceOrAdd(name: "Accept-Encoding", value: "gzip, deflate")
+        headers.replaceOrAdd(name: "Accept-Encoding", value: "gzip, deflate, br")
     }
 
     /// Charset declared by the response, if any, so the injected markup is written in

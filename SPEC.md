@@ -294,10 +294,25 @@ ne sait pas le décoder, l'injection échoue **en silence**.
 Sur les seules requêtes injectables, réécrire l'en-tête sortant :
 
 ```
-Accept-Encoding: gzip, deflate, br, zstd  →  gzip, br
+Accept-Encoding: gzip, deflate, br, zstd  →  gzip, deflate, br
 ```
 
-Le reste du trafic conserve zstd et sa compression optimale.
+**Brotli est conservé** : le framework `Compression` d'Apple l'implémente
+(`COMPRESSION_BROTLI`), donc le supporter ne coûte aucun décompresseur C tiers dans un
+processus dont toute l'entrée est hostile. Vérifié par aller-retour.
+
+Le coût de l'exclure a été mesuré sur de vraies pages, et il est loin d'être
+négligeable : les sites qui servent effectivement du brotli perdent **de +13 % à
++50 %** sur le document, et jusqu'à **+191 %** dans un cas. En revanche, beaucoup de
+grands sites (Le Monde, Wikipédia, GitHub, Le Figaro) servent du gzip même quand le
+navigateur propose brotli — coût nul pour eux.
+
+**zstd reste exclu** : le framework ne l'implémente pas, et aucune origine mesurée ne
+l'a choisi face à brotli ou gzip.
+
+**Borne obligatoire au décodage.** Quelques kilo-octets de gzip peuvent devenir des
+gigaoctets ; un décodeur non borné est un déni de service muni d'un en-tête
+`Content-Encoding`. La limite est celle du budget d'injection.
 
 ### 5.5 CSP
 

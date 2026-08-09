@@ -35,7 +35,6 @@ struct ResponseEligibilityTests {
         // parses it.
         (.ok, [("Content-Type", "text/html")], "empty"),
         // An encoding we cannot decode must not be guessed at.
-        (.ok, [("Content-Type", "text/html"), ("Content-Encoding", "br")], "document"),
         (.ok, [("Content-Type", "text/html"), ("Content-Encoding", "zstd")], "document"),
     ])
     func notEligible(status: HTTPResponseStatus, headers: [(String, String)], dest: String) {
@@ -60,16 +59,25 @@ struct ResponseEligibilityTests {
         #expect(verdict == .eligible)
     }
 
-    /// Brotli and zstd are excluded on purpose: linking a C decompressor into a process
-    /// whose whole input is hostile costs more than the bandwidth it saves.
+    /// Only zstd is dropped. Measured cost of also dropping brotli, before Apple's
+    /// Compression framework turned out to implement it: +13% to +50% on the document
+    /// for origins that serve it, and +191% on one.
     @Test("the request asks only for what we can decode")
     func acceptEncodingIsNarrowed() {
         var headers = HTTPHeaders()
         headers.add(name: "Accept-Encoding", value: "gzip, deflate, br, zstd")
         ResponseEligibility.rewriteAcceptEncoding(&headers)
-        let value = headers.first(name: "Accept-Encoding")
-        #expect(value == "gzip, deflate")
+        #expect(headers.first(name: "Accept-Encoding") == "gzip, deflate, br")
         #expect(headers["Accept-Encoding"].count == 1)
+    }
+
+    @Test("a brotli-encoded document is eligible")
+    func brotliIsEligible() {
+        let verdict = ResponseEligibility.verdict(
+            for: response(headers: [("Content-Type", "text/html"), ("Content-Encoding", "br")]),
+            requestType: "document"
+        )
+        #expect(verdict == .eligible)
     }
 
     @Test("the declared charset is recovered")
@@ -263,4 +271,94 @@ struct HTMLInjectorTests {
     func emptyPayload() {
         #expect(InjectionPayload.markup(css: "", script: nil, nonce: "N").isEmpty)
     }
+}
+
+@Suite("Content decoding")
+struct ContentDecoderTests {
+
+    private func roundTrip(_ text: String, encoding: ContentDecoder.Encoding) throws -> String {
+        let source = Array(text.utf8)
+        let compressed: [UInt8]
+        switch encoding {
+        case .brotli:  compressed = try compress(source, using: COMPRESSION_BROTLI)
+        case .deflate: compressed = try compress(source, using: COMPRESSION_ZLIB)
+        case .gzip:    compressed = gzipWrap(try compress(source, using: COMPRESSION_ZLIB), original: source)
+        case .identity: compressed = source
+        }
+        let decoded = try ContentDecoder.decode(compressed, encoding: encoding)
+        return String(decoding: decoded, as: UTF8.self)
+    }
+
+    /// Brotli comes from Apple's own framework, so supporting it costs no third-party
+    /// C decompressor in a process whose entire input is hostile.
+    @Test("every supported encoding round-trips", arguments: [
+        ContentDecoder.Encoding.gzip, .deflate, .brotli, .identity,
+    ])
+    func roundTrips(encoding: ContentDecoder.Encoding) throws {
+        let html = "<html><head><title>Tamis</title></head><body>"
+            + String(repeating: "<div class=\"ad\">x</div>", count: 500) + "</body></html>"
+        #expect(try roundTrip(html, encoding: encoding) == html)
+    }
+
+    @Test("encoding names are recognised, unknown ones refused", arguments: [
+        ("gzip", ContentDecoder.Encoding.gzip), ("x-gzip", .gzip), ("br", .brotli),
+        ("deflate", .deflate), ("identity", .identity), ("GZIP", .gzip),
+        ("gzip, chunked", .gzip),
+    ])
+    func parsing(header: String, expected: ContentDecoder.Encoding) {
+        #expect(ContentDecoder.Encoding.parse(header) == expected)
+    }
+
+    @Test("an unknown encoding is not guessed at")
+    func unknownEncoding() {
+        #expect(ContentDecoder.Encoding.parse("zstd") == nil)
+        #expect(ContentDecoder.Encoding.parse("exi") == nil)
+    }
+
+    /// A few kilobytes of gzip can become gigabytes. An unbounded decoder is a denial
+    /// of service with a Content-Encoding header.
+    @Test("a decompression bomb hits the ceiling instead of memory")
+    func bombIsBounded() throws {
+        let huge = Array(String(repeating: "A", count: 4_000_000).utf8)
+        let compressed = gzipWrap(try compress(huge, using: COMPRESSION_ZLIB), original: huge)
+        #expect(compressed.count < 100_000)   // small on the wire, enormous decoded
+        #expect(throws: ContentDecoder.DecodeError.self) {
+            _ = try ContentDecoder.decode(compressed, encoding: .gzip, limit: 1_000_000)
+        }
+    }
+
+    @Test("a malformed body is refused rather than half-decoded")
+    func malformed() {
+        #expect(throws: ContentDecoder.DecodeError.self) {
+            _ = try ContentDecoder.decode([0x1F, 0x8B, 0x08, 0x00], encoding: .gzip)
+        }
+    }
+}
+
+// MARK: - Compression helpers for the tests
+
+import Compression
+
+private func compress(_ bytes: [UInt8], using algorithm: compression_algorithm) throws -> [UInt8] {
+    var destination = [UInt8](repeating: 0, count: max(bytes.count, 1024))
+    let written = bytes.withUnsafeBufferPointer { source in
+        compression_encode_buffer(
+            &destination, destination.count, source.baseAddress!, source.count, nil, algorithm
+        )
+    }
+    guard written > 0 else { throw ContentDecoder.DecodeError.malformed }
+    return Array(destination[0..<written])
+}
+
+/// Wraps raw deflate output in the RFC 1952 header and trailer.
+private func gzipWrap(_ deflated: [UInt8], original: [UInt8]) -> [UInt8] {
+    var out: [UInt8] = [0x1F, 0x8B, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xFF]
+    out += deflated
+    out += [0, 0, 0, 0]                                   // CRC32, unchecked here
+    let size = UInt32(truncatingIfNeeded: original.count)
+    out += [
+        UInt8(size & 0xFF), UInt8((size >> 8) & 0xFF),
+        UInt8((size >> 16) & 0xFF), UInt8((size >> 24) & 0xFF),
+    ]
+    return out
 }
