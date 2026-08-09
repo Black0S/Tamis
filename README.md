@@ -121,6 +121,16 @@ exclusion list, and which user scripts and styles reached which page.
 `--scripts` is what makes a script enabled in the app actually run. The app manages the
 library; it does not yet carry traffic, so the two are joined by hand for now.
 
+### What Tamis would do with your browsers
+
+```bash
+swift run --package-path Packages/TamisApps tamis-apps
+```
+
+Lists every browser macOS knows about, characterises its engine from the bundle's
+structure, and prints the suggested treatment with the reason. Reads the application
+registry and bundle layouts — never history, cookies, bookmarks or passwords.
+
 ### The application
 
 ```bash
@@ -177,6 +187,7 @@ root:
 | `TamisTLS` | Certificate authority and short-lived leaf certificates |
 | `TamisUserScripts` | Tampermonkey scripts and UserCSS styles |
 | `TamisLists` | HTTPS exclusions, IDNA, list sources |
+| `TamisApps` | Browser discovery, engine characterisation, per-app policy |
 | `TamisProxy` | CONNECT, TLS interception, HTTP filtering, injection |
 
 ## What Tamis will never do
@@ -210,6 +221,7 @@ root:
 | DNS screen — provider, local resolver, live decisions | done |
 | Scripts screen — filesystem tree, editor, install, revert | done |
 | User scripts and styles reaching real pages through the proxy | done |
+| Applications screen — browser discovery, three-state policy | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
