@@ -268,6 +268,7 @@ root:
 | Preflight — conflicts, existing proxy, stale authorities, VPN | done |
 | PAC — no dnsResolve, exclusions direct, fail-open | done |
 | Installation plan — what changes, what undoes it | done |
+| launchd jobs and the PAC file the plan installs | done |
 | Applying the plan, onboarding, uninstall, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
