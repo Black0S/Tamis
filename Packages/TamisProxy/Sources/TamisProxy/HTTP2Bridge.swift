@@ -31,6 +31,8 @@ enum HTTP2Bridge {
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         events: EventSink
     ) -> EventLoopFuture<Void> {
@@ -60,7 +62,8 @@ enum HTTP2Bridge {
                             host: host,
                             engine: engine,
                             cosmetic: cosmetic,
-                            userScripts: userScripts, resolvedRequires: resolvedRequires,
+                            userScripts: userScripts, userStyles: userStyles,
+                styleVariables: styleVariables, resolvedRequires: resolvedRequires,
                             events: events
                         )
                     }
@@ -77,6 +80,8 @@ enum HTTP2Bridge {
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         events: EventSink
     ) -> EventLoopFuture<Void> {
@@ -92,7 +97,8 @@ enum HTTP2Bridge {
                 HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
                 ResponseInjectingHandler(
                     client: clientStream, host: host, cosmetic: cosmetic,
-                    userScripts: userScripts, resolvedRequires: resolvedRequires,
+                    userScripts: userScripts, userStyles: userStyles,
+                styleVariables: styleVariables, resolvedRequires: resolvedRequires,
                     context: requestContext, events: events, propagatesClose: false
                 ),
             ])

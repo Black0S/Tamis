@@ -123,6 +123,7 @@ struct CosmeticEndToEndTests {
     private func run(
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript] = [],
+        userStyles: [UserStyle] = [],
         originHeaders: [(String, String)] = [],
         curlExtra: [String] = [],
         _ body: (_ page: String, _ events: [EventSink.Event]) async throws -> Void
@@ -147,7 +148,7 @@ struct CosmeticEndToEndTests {
         let proxy = ProxyServer(
             configuration: .init(
                 port: 0, interception: materials, cosmetic: cosmetic,
-                userScripts: userScripts
+                userScripts: userScripts, userStyles: userStyles
             ),
             events: events
         )
@@ -323,6 +324,67 @@ struct CosmeticEndToEndTests {
         try await run(cosmetic: nil, userScripts: [script]) { page, _ in
             #expect(!page.contains("<script nonce="))
             #expect(!page.contains("nope"))
+        }
+    }
+
+    /// A user style shares the injection channel with cosmetic rules and is emitted
+    /// after them, so it can override anything a filter list decided.
+    @Test("a matching user style reaches the page")
+    func userStyleIsApplied() async throws {
+        let style = try UserStyle.parse("""
+        /* ==UserStyle==
+        @name      Local dark
+        @var color accent "Accent" #00ff88
+        ==/UserStyle== */
+        @-moz-document domain("localhost") {
+          body { background: #111; border-color: var(--accent); }
+        }
+        """)
+        try await run(cosmetic: nil, userStyles: [style]) { page, events in
+            #expect(page.contains("<style nonce="))
+            #expect(page.contains("background: #111"))
+            #expect(page.contains("--accent: #00ff88;"))
+            #expect(page.contains("Contenu de l'article."))
+
+            let applied = events.contains { event in
+                if case .userStylesApplied(_, let names) = event { return names == ["Local dark"] }
+                return false
+            }
+            #expect(applied, "events: \(events)")
+        }
+    }
+
+    @Test("a user style scoped elsewhere does not reach the page")
+    func nonMatchingUserStyle() async throws {
+        let style = try UserStyle.parse("""
+        /* ==UserStyle==
+        @name Elsewhere
+        ==/UserStyle== */
+        @-moz-document domain("other.example") { body { background: red; } }
+        """)
+        try await run(cosmetic: nil, userStyles: [style]) { page, _ in
+            #expect(!page.contains("<style nonce="))
+            #expect(!page.contains("background: red"))
+        }
+    }
+
+    /// The ordering that lets a user override a list: cosmetic rules first, the user's
+    /// own style after.
+    @Test("a user style is emitted after the list rules")
+    func styleFollowsCosmetic() async throws {
+        let style = try UserStyle.parse("""
+        /* ==UserStyle==
+        @name Override
+        ==/UserStyle== */
+        @-moz-document domain("localhost") { .ad-banner { display: block !important; } }
+        """)
+        try await run(
+            cosmetic: CosmeticEngine(rules: "localhost##.ad-banner"),
+            userStyles: [style]
+        ) { page, _ in
+            let hide = try #require(page.range(of: "display: none !important")?.lowerBound)
+            let show = try #require(page.range(of: "display: block !important")?.lowerBound)
+            #expect(hide < show, "the user's style must come last")
         }
     }
 

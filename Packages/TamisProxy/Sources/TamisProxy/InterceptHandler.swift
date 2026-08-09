@@ -132,6 +132,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let engine: FilterEngine
     private let cosmetic: CosmeticEngine?
     private let userScripts: [UserScript]
+    private let userStyles: [UserStyle]
+    private let styleVariables: [String: [String: String]]
     private let resolvedRequires: [URL: String]
     private let events: EventSink
     private let onPinningDetected: @Sendable (String) -> Void
@@ -148,6 +150,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         events: EventSink,
         onPinningDetected: @escaping @Sendable (String) -> Void
@@ -158,6 +162,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.engine = engine
         self.cosmetic = cosmetic
         self.userScripts = userScripts
+        self.userStyles = userStyles
+        self.styleVariables = styleVariables
         self.resolvedRequires = resolvedRequires
         self.events = events
         self.onPinningDetected = onPinningDetected
@@ -211,6 +217,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         let engine = self.engine
         let cosmetic = self.cosmetic
         let userScripts = self.userScripts
+        let userStyles = self.userStyles
+        let styleVariables = self.styleVariables
         let resolvedRequires = self.resolvedRequires
 
         let installed: EventLoopFuture<Void>
@@ -219,7 +227,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
             installed = HTTP2Bridge.install(
                 client: client, upstream: upstream, host: host,
                 engine: engine, cosmetic: cosmetic,
-                userScripts: userScripts, resolvedRequires: resolvedRequires,
+                userScripts: userScripts, userStyles: userStyles,
+                styleVariables: styleVariables, resolvedRequires: resolvedRequires,
                 events: events
             )
         case .http1:
@@ -229,7 +238,8 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
                 ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
                 ResponseInjectingHandler(
                     client: client, host: host, cosmetic: cosmetic,
-                    userScripts: userScripts, resolvedRequires: resolvedRequires,
+                    userScripts: userScripts, userStyles: userStyles,
+                styleVariables: styleVariables, resolvedRequires: resolvedRequires,
                     context: requestContext, events: events, propagatesClose: true
                 ),
             ])

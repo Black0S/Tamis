@@ -50,6 +50,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     private let host: String
     private let cosmetic: CosmeticEngine?
     private let userScripts: [UserScript]
+    private let userStyles: [UserStyle]
+    private let styleVariables: [String: [String: String]]
     private let resolvedRequires: [URL: String]
     private let context: RequestContext
     private let events: EventSink
@@ -62,6 +64,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         host: String,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         context: RequestContext,
         events: EventSink,
@@ -71,6 +75,8 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         self.host = host
         self.cosmetic = cosmetic
         self.userScripts = userScripts
+        self.userStyles = userStyles
+        self.styleVariables = styleVariables
         self.resolvedRequires = resolvedRequires
         self.context = context
         self.events = events
@@ -80,7 +86,7 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
     func channelRead(context ctx: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case .head(let head):
-            guard cosmetic != nil || !userScripts.isEmpty,
+            guard cosmetic != nil || !userScripts.isEmpty || !userStyles.isEmpty,
                   ResponseEligibility.verdict(for: head, requestType: context.secFetchDest) == .eligible
             else {
                 mode = .passthrough
@@ -147,7 +153,16 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
         // classes and ids it actually carries — a few hundred bytes instead of 216 KB.
         let tokens = DocumentTokens.scan(decoded)
         let set = cosmetic?.set(forHostname: host, documentTokens: tokens) ?? CosmeticSet()
-        let css = set.inlineCSS()
+        // User styles come after the list rules, so a style can override anything a
+        // list decided — which is the point of having both.
+        let pageURL = URL(string: "https://\(host)\(context.path ?? "/")")
+        let styleCSS = pageURL.map {
+            Self.userStyleCSS(
+                userStyles: userStyles, variables: styleVariables,
+                url: $0, host: host, events: events
+            )
+        } ?? ""
+        let css = [set.inlineCSS(), styleCSS].filter { !$0.isEmpty }.joined(separator: "\n")
         // Procedural selectors are parsed here, not in the page: a malformed rule is
         // rejected before it can reach a browser, and the runtime stays an interpreter
         // rather than a parser.
@@ -213,6 +228,29 @@ final class ResponseInjectingHandler: ChannelInboundHandler {
             bytes: markup.utf8.count
         ))
         flushDecoded(head: newHead, body: rewritten, trailers: trailers)
+    }
+
+    /// The CSS contributed by user styles matching this page.
+    static func userStyleCSS(
+        userStyles: [UserStyle],
+        variables: [String: [String: String]],
+        url: URL,
+        host: String,
+        events: EventSink
+    ) -> String {
+        guard !userStyles.isEmpty else { return "" }
+        var pieces: [String] = []
+        var applied: [String] = []
+        for style in userStyles {
+            guard let css = style.css(for: url, overrides: variables[style.id] ?? [:]) else {
+                continue
+            }
+            pieces.append(css)
+            applied.append(style.name)
+        }
+        guard !pieces.isEmpty else { return "" }
+        events.emit(.userStylesApplied(host: host, names: applied))
+        return pieces.joined(separator: "\n")
     }
 
     /// Builds the user-script payload for this page, reporting anything it cannot run.

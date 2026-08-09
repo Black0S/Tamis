@@ -37,6 +37,11 @@ public final class ProxyServer: Sendable {
         /// User scripts, already parsed. Empty is the ordinary state — most pages have
         /// none, and the payload only grows for the ones that do.
         public var userScripts: [UserScript] = []
+        /// User styles, already parsed. Emitted after the rules from lists so a style
+        /// can override anything a list decided — which is the point of having both.
+        public var userStyles: [UserStyle] = []
+        /// Values the user chose for a style's `@var` declarations, by style id.
+        public var styleVariables: [String: [String: String]] = [:]
         /// Contents of `@require` URLs, fetched and cached by the app. A script whose
         /// libraries are missing is skipped rather than run half-initialised.
         public var resolvedRequires: [URL: String] = [:]
@@ -49,6 +54,8 @@ public final class ProxyServer: Sendable {
             engine: FilterEngine? = nil,
             cosmetic: CosmeticEngine? = nil,
             userScripts: [UserScript] = [],
+            userStyles: [UserStyle] = [],
+            styleVariables: [String: [String: String]] = [:],
             resolvedRequires: [URL: String] = [:]
         ) {
             self.host = host
@@ -58,6 +65,8 @@ public final class ProxyServer: Sendable {
             self.engine = engine
             self.cosmetic = cosmetic
             self.userScripts = userScripts
+            self.userStyles = userStyles
+            self.styleVariables = styleVariables
             self.resolvedRequires = resolvedRequires
         }
     }
@@ -119,6 +128,8 @@ public final class ProxyServer: Sendable {
                         engine: configuration.engine,
                         cosmetic: configuration.cosmetic,
                         userScripts: configuration.userScripts,
+                        userStyles: configuration.userStyles,
+                        styleVariables: configuration.styleVariables,
                         resolvedRequires: configuration.resolvedRequires,
                         learn: learn
                     ),
@@ -165,6 +176,7 @@ public final class EventSink: Sendable {
         /// because the page keeps working while quietly doing less than the list says.
         case scriptletsSkipped(host: String, names: [String])
         case userScriptsInjected(host: String, names: [String])
+        case userStylesApplied(host: String, names: [String])
         /// A script asked for a capability this build does not provide. Reported rather
         /// than approximated, so a script that quietly does less is visible.
         case userScriptGrantUnavailable(script: String, grant: String)
@@ -202,6 +214,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
     private let engine: FilterEngine?
     private let cosmetic: CosmeticEngine?
     private let userScripts: [UserScript]
+    private let userStyles: [UserStyle]
+    private let styleVariables: [String: [String: String]]
     private let resolvedRequires: [URL: String]
     private let learn: @Sendable (String) -> Void
     private var target: (host: String, port: Int)?
@@ -217,6 +231,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         engine: FilterEngine?,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         learn: @escaping @Sendable (String) -> Void
     ) {
@@ -227,6 +243,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         self.engine = engine
         self.cosmetic = cosmetic
         self.userScripts = userScripts
+        self.userStyles = userStyles
+        self.styleVariables = styleVariables
         self.resolvedRequires = resolvedRequires
         self.learn = learn
     }
@@ -350,6 +368,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         let engine = self.engine ?? FilterEngine(rules: "")
         let cosmetic = self.cosmetic
         let userScripts = self.userScripts
+        let userStyles = self.userStyles
+        let styleVariables = self.styleVariables
         let resolvedRequires = self.resolvedRequires
 
         UpstreamConnector.connect(
@@ -361,7 +381,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                     context: context, target: target, materials: materials,
                     upstream: upstream, negotiated: negotiated,
                     engine: engine, cosmetic: cosmetic,
-                    userScripts: userScripts, resolvedRequires: resolvedRequires,
+                    userScripts: userScripts, userStyles: userStyles,
+                    styleVariables: styleVariables, resolvedRequires: resolvedRequires,
                     learn: learn
                 )
 
@@ -399,6 +420,8 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
         engine: FilterEngine,
         cosmetic: CosmeticEngine?,
         userScripts: [UserScript],
+        userStyles: [UserStyle],
+        styleVariables: [String: [String: String]],
         resolvedRequires: [URL: String],
         learn: @escaping @Sendable (String) -> Void
     ) {
@@ -429,6 +452,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                                     target: target, upstream: upstream,
                                     negotiated: negotiated, engine: engine,
                                     cosmetic: cosmetic, userScripts: userScripts,
+                                    userStyles: userStyles, styleVariables: styleVariables,
                                     resolvedRequires: resolvedRequires,
                                     events: events, onPinningDetected: learn
                                 ),
