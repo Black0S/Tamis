@@ -257,7 +257,8 @@ root:
 | Settings screen — locations, exclusions audit, allowlist audit | done |
 | Installing: privileged daemon, PAC, port 53, trusted authority | not started |
 | Preflight — conflicts, existing proxy, stale authorities, VPN | done |
-| Onboarding, uninstall, PAC, app updates | not started |
+| PAC — no dnsResolve, exclusions direct, fail-open | done |
+| Onboarding, uninstall, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
 | Onboarding, uninstall, privileged daemon | not started |
