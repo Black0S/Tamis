@@ -39,7 +39,7 @@ let package = Package(
         .executableTarget(
             name: "tamis-proxy",
             dependencies: [
-                "TamisProxy", "TamisTLS", "TamisFilterEngine", "TamisLists",
+                "TamisProxy", "TamisTLS", "TamisFilterEngine", "TamisLists", "TamisUserScripts",
                 .product(name: "NIOCore", package: "swift-nio"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]

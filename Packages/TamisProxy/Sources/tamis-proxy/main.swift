@@ -3,10 +3,11 @@ import TamisFilterEngine
 import TamisLists
 import TamisProxy
 import TamisTLS
+import TamisUserScripts
 
 // Runs the proxy against real lists, on a port, changing nothing on the machine.
 //
-//   swift run -c release tamis-proxy --root /tmp/tamis --port 18080
+//   swift run -c release tamis-proxy --root /tmp/tamis --port 18080 [--scripts <dir>]
 //
 // Then, from another terminal — no system proxy setting, no keychain, no root:
 //
@@ -45,6 +46,28 @@ let engine = FilterEngine(lines: lines)
 let cosmetic = CosmeticEngine(rules: lines)
 print("Règles réseau     \(engine.stats.networkRules)")
 print("Règles cosmétiques \(cosmetic.stats.rules)")
+
+// MARK: Scripts and styles
+
+// The store hands over what is enabled; parsing happens here because a file that no
+// longer parses must be reported and skipped, not silently injected half-formed.
+var userScripts: [UserScript] = []
+var userStyles: [UserStyle] = []
+
+if let scriptsPath = value(after: "--scripts") {
+    let store = ScriptStore(root: URL(fileURLWithPath: scriptsPath))
+    try await store.reload()
+
+    for (path, text, _) in await store.enabledScripts() {
+        do { userScripts.append(try UserScript.parse(text)) }
+        catch { print("  script ignoré  \(path) — \(error)") }
+    }
+    for (path, text, _) in await store.enabledStyles() {
+        do { userStyles.append(try UserStyle.parse(text, fallbackName: path)) }
+        catch { print("  style ignoré   \(path) — \(error)") }
+    }
+    print("Scripts           \(userScripts.count) actifs, \(userStyles.count) styles")
+}
 
 // MARK: Authority
 
@@ -89,6 +112,12 @@ let events = EventSink { event in
         print("  SCRIPTLETS NON IMPLÉMENTÉS \(host)  \(names.joined(separator: ", "))")
     case .upstreamCertificateRejected(let host, let reason, _):
         print("  CERT REFUSÉ \(host)  — \(reason)")
+    case .userScriptsInjected(let host, let names):
+        print("  SCRIPTS   \(host)  \(names.joined(separator: ", "))")
+    case .userStylesApplied(let host, let names):
+        print("  STYLES    \(host)  \(names.joined(separator: ", "))")
+    case .userScriptGrantUnavailable(let script, let grant):
+        print("  GRANT NON FOURNI \(script) — \(grant)")
     case .failed(let host, let message):
         print("  ÉCHEC     \(host)  — \(message)")
     default:
@@ -103,7 +132,9 @@ let server = ProxyServer(
         policy: InterceptionPolicy(exclusions: exclusions),
         interception: materials,
         engine: engine,
-        cosmetic: cosmetic
+        cosmetic: cosmetic,
+        userScripts: userScripts,
+        userStyles: userStyles
     ),
     events: events
 )

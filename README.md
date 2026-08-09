@@ -103,7 +103,8 @@ everything passes the first.
 ### Real traffic through the real engines
 
 ```bash
-swift run -c release --package-path Packages/TamisProxy tamis-proxy --root /tmp/tamis --port 18080
+swift run -c release --package-path Packages/TamisProxy tamis-proxy \
+    --root /tmp/tamis --port 18080 --scripts ~/Library/Application\ Support/Tamis/Scripts
 ```
 
 Starts the proxy on a port with whatever lists are in that store, and writes its
@@ -115,7 +116,10 @@ curl -x http://127.0.0.1:18080 --cacert /tmp/tamis/ca.pem https://example.com/
 ```
 
 It logs every decision: intercepted, blocked and by which rule, tunnelled and by which
-exclusion list.
+exclusion list, and which user scripts and styles reached which page.
+
+`--scripts` is what makes a script enabled in the app actually run. The app manages the
+library; it does not yet carry traffic, so the two are joined by hand for now.
 
 ### The application
 
@@ -205,6 +209,7 @@ root:
 | Proxy carrying real traffic, on a port, with real lists | done |
 | DNS screen — provider, local resolver, live decisions | done |
 | Scripts screen — filesystem tree, editor, install, revert | done |
+| User scripts and styles reaching real pages through the proxy | done |
 | Installing: system proxy, port 53, trusted authority | not started |
 | HTTP/2 | written, not enabled — see below |
 | SwiftUI application | shell only — navigation and dashboard, no engine behind it |
