@@ -13,6 +13,11 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
+            name: "tamis-dnsd",
+            dependencies: ["TamisDNS"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
             name: "tamis-dnsbench",
             dependencies: ["TamisDNS"],
             swiftSettings: [.swiftLanguageMode(.v6)]
