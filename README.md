@@ -43,8 +43,8 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
 ## Try it now
 
-Two tools run today without installing anything, without privileges, and without
-touching any system setting.
+Everything below runs today without installing anything, without privileges, and
+without touching any system setting.
 
 ### The DNS resolver
 
@@ -168,14 +168,13 @@ reconfigured, so the system does not use it yet. The Scripts screen manages
 
 The History screen shows what the resolver decided, and the DNS resolver writes to it.
 
-`TAMIS_STORE`, `TAMIS_SCRIPTS` and `TAMIS_HISTORY` point those elsewhere.
-
-`TAMIS_STORE=/some/path` points it at a throwaway set of lists instead.
+`TAMIS_STORE`, `TAMIS_SCRIPTS` and `TAMIS_HISTORY` point those directories elsewhere.
 
 ## Build and test
 
 ```bash
-for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts TamisLists TamisProxy; do
+for package in TamisFilterEngine TamisDNS TamisTLS TamisUserScripts \
+               TamisLists TamisApps TamisHistory TamisSystem TamisProxy; do
   swift test --package-path "Packages/$package"
 done
 ```
@@ -269,6 +268,7 @@ root:
 | PAC — no dnsResolve, exclusions direct, fail-open | done |
 | Installation plan — what changes, what undoes it | done |
 | launchd jobs and the PAC file the plan installs | done |
+| Installer and uninstaller — dry run by default | done |
 | Applying the plan, onboarding, uninstall, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
