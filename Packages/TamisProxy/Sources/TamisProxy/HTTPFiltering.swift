@@ -59,7 +59,11 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
             // arrives in a form that forces us to skip it.
             var forwarded = head
             ResponseEligibility.rewriteAcceptEncoding(&forwarded.headers)
-            upstream.write(HTTPClientRequestPart.head(forwarded), promise: nil)
+            let headPromise = upstream.eventLoop.makePromise(of: Void.self)
+            headPromise.futureResult.whenFailure { error in
+                self.events.emit(.failed(host: self.host, message: "upstream head: \(error)"))
+            }
+            upstream.write(HTTPClientRequestPart.head(forwarded), promise: headPromise)
 
         case .body(let buffer):
             guard !isBlocked else { return }
@@ -70,7 +74,11 @@ final class HTTPFilteringHandler: ChannelInboundHandler {
                 isBlocked = false
                 return
             }
-            upstream.writeAndFlush(HTTPClientRequestPart.end(trailers), promise: nil)
+            let endPromise = upstream.eventLoop.makePromise(of: Void.self)
+            endPromise.futureResult.whenFailure { error in
+                self.events.emit(.failed(host: self.host, message: "upstream end: \(error)"))
+            }
+            upstream.writeAndFlush(HTTPClientRequestPart.end(trailers), promise: endPromise)
         }
     }
 

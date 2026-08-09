@@ -134,7 +134,7 @@ public final class EventSink: Sendable {
 
     public enum Event: Sendable {
         case tunnelled(host: String, reason: InterceptionPolicy.TunnelReason)
-        case intercepted(host: String)
+        case intercepted(host: String, negotiated: String)
         /// The client refused our certificate: it pins. Remembered so the retry is
         /// tunnelled.
         case pinningDetected(host: String)
@@ -309,21 +309,71 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
             }
     }
 
-    /// Answers the CONNECT, then turns the client side into a TLS server.
+    /// Connects to the origin first, then answers the CONNECT.
     ///
-    /// The 200 goes out before the TLS handlers are installed, because the client will
-    /// not start its handshake until it has seen one.
+    /// The ordering is what makes the rest work. Knowing the origin's protocol lets
+    /// Tamis offer the client exactly that, so the two sides can never disagree; and
+    /// discovering that interception is impossible while the client is still waiting
+    /// means falling back to a plain tunnel without it ever noticing.
     private func beginInterception(context: ChannelHandlerContext, to target: (host: String, port: Int)) {
         guard let materials = interception else {
             openTunnel(context: context, to: target)
             return
         }
-        let client = context.channel
         let events = self.events
         let group = self.group
         let learn = self.learn
-        let engine = self.engine
+        let engine = self.engine ?? FilterEngine(rules: "")
         let cosmetic = self.cosmetic
+
+        UpstreamConnector.connect(
+            to: target, materials: materials, on: context.eventLoop
+        ).whenComplete { result in
+            switch result {
+            case .success(.ready(let upstream, let negotiated)):
+                self.answerAndInstallTLS(
+                    context: context, target: target, materials: materials,
+                    upstream: upstream, negotiated: negotiated,
+                    engine: engine, cosmetic: cosmetic, learn: learn
+                )
+
+            case .success(.requiresClientCertificate):
+                // The origin wants a certificate only the user's keychain holds. The
+                // client has not been answered yet, so this can degrade to a plain
+                // tunnel invisibly rather than failing the connection.
+                learn(target.host)
+                events.emit(.clientCertificateRequired(host: target.host))
+                self.openTunnel(context: context, to: target)
+
+            case .success(.certificateRejected(let reason, let isNameMismatch)):
+                // A security finding, never answered by falling back to a tunnel —
+                // that would hide exactly what was just detected.
+                events.emit(.upstreamCertificateRejected(
+                    host: target.host, reason: reason, isNameMismatch: isNameMismatch
+                ))
+                self.respond(context: context, status: .badGateway)
+
+            case .success(.failed(let error)), .failure(let error):
+                events.emit(.failed(host: target.host, message: "\(error)"))
+                self.respond(context: context, status: .badGateway)
+            }
+        }
+    }
+
+    /// Answers 200, strips the HTTP machinery, and becomes a TLS server for the
+    /// protocol the origin chose.
+    private func answerAndInstallTLS(
+        context: ChannelHandlerContext,
+        target: (host: String, port: Int),
+        materials: TLSInterception.Materials,
+        upstream: Channel,
+        negotiated: NegotiatedProtocol,
+        engine: FilterEngine,
+        cosmetic: CosmeticEngine?,
+        learn: @escaping @Sendable (String) -> Void
+    ) {
+        let client = context.channel
+        let events = self.events
 
         var headers = HTTPHeaders()
         headers.add(name: "Content-Length", value: "0")
@@ -340,14 +390,15 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
                     .flatMap { () -> EventLoopFuture<Void> in
                         do {
                             let configuration = try TLSInterception.serverConfiguration(
-                                for: target.host, materials: materials
+                                for: target.host, materials: materials, advertising: negotiated
                             )
                             let sslContext = try NIOSSLContext(configuration: configuration)
                             return pipeline.addHandlers([
                                 NIOSSLServerHandler(context: sslContext),
                                 InterceptHandler(
-                                    target: target, materials: materials, group: group,
-                                    events: events, engine: engine, cosmetic: cosmetic,
+                                    target: target, upstream: upstream,
+                                    negotiated: negotiated, engine: engine,
+                                    cosmetic: cosmetic, events: events,
                                     onPinningDetected: learn
                                 ),
                             ])
@@ -358,6 +409,7 @@ final class ConnectHandler: ChannelInboundHandler, RemovableChannelHandler {
             }
             .whenFailure { error in
                 events.emit(.failed(host: target.host, message: "\(error)"))
+                upstream.close(promise: nil)
                 client.close(promise: nil)
             }
     }

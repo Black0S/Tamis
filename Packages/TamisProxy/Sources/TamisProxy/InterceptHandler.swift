@@ -3,12 +3,12 @@ import NIOCore
 import NIOPosix
 import NIOSSL
 import NIOTLS
+import NIOHTTP1
 import NIOConcurrencyHelpers
 import X509
 import SwiftASN1
 import TamisTLS
 import TamisFilterEngine
-import NIOHTTP1
 
 /// Builds the two TLS sessions an intercepted connection is made of.
 ///
@@ -48,9 +48,13 @@ public enum TLSInterception {
     /// The authority is sent alongside the leaf. A client that already trusts the root
     /// does not need it, but sending it costs one certificate and removes an entire
     /// class of "works here, fails there" reports.
+    ///
+    /// Only the protocol the origin chose is advertised, so the two sides can never
+    /// disagree — see ``NegotiatedProtocol``.
     static func serverConfiguration(
         for target: String,
-        materials: Materials
+        materials: Materials,
+        advertising negotiated: NegotiatedProtocol
     ) throws -> TLSConfiguration {
         let certificate = try materials.cache.certificate(for: target)
 
@@ -68,10 +72,7 @@ public enum TLSInterception {
             certificateChain: chain,
             privateKey: .privateKey(key)
         )
-        // Only HTTP/1.1 is advertised for now. Announcing h2 without implementing it
-        // would have the client speak a protocol we cannot parse, which fails as a
-        // hang rather than as an error.
-        configuration.applicationProtocols = ["http/1.1"]
+        configuration.applicationProtocols = negotiated.alpn
         return configuration
     }
 
@@ -82,9 +83,8 @@ public enum TLSInterception {
     /// authority — `mkcert`, Caddy, corporate roots.
     static func clientConfiguration() -> TLSConfiguration {
         var configuration = TLSConfiguration.makeClientConfiguration()
-        configuration.applicationProtocols = ["http/1.1"]
-        // The built-in check is replaced, not relaxed: the callback below is stricter
-        // than BoringSSL's default here, since it consults the system's trust policy.
+        // The built-in check is replaced, not relaxed: the callback consults the
+        // system's trust policy, which BoringSSL cannot.
         configuration.certificateVerification = .noHostnameVerification
         return configuration
     }
@@ -114,112 +114,61 @@ public enum TLSInterception {
     }
 }
 
-/// Reports why an upstream TLS session failed.
+/// Waits for the client handshake, then wires the two sides together.
 ///
-/// `connect()` completes as soon as TCP is up — the handshake happens afterwards, so a
-/// rejected origin certificate arrives here as a channel error rather than as a failed
-/// connect. Watching the wrong one is how a security finding turns into a generic
-/// "connection failed".
-final class UpstreamDiagnosticHandler: ChannelInboundHandler {
-    typealias InboundIn = ByteBuffer
-
-    private let host: String
-    private let events: EventSink
-    private let outcome: NIOLockedValueBox<SystemTrustVerifier.Result?>
-    private let onClientCertificateRequired: @Sendable (String) -> Void
-    private var reported = false
-
-    init(
-        host: String,
-        events: EventSink,
-        outcome: NIOLockedValueBox<SystemTrustVerifier.Result?>,
-        onClientCertificateRequired: @escaping @Sendable (String) -> Void
-    ) {
-        self.host = host
-        self.events = events
-        self.outcome = outcome
-        self.onClientCertificateRequired = onClientCertificateRequired
-    }
-
-    func errorCaught(context: ChannelHandlerContext, error: Error) {
-        guard !reported else { return }
-        reported = true
-
-        if case .rejected(let reason, let isNameMismatch)? = outcome.withLockedValue({ $0 }) {
-            // A bad origin certificate is a security finding, not an outage, and must
-            // never be answered by falling back to a tunnel — that would hide exactly
-            // what was just detected.
-            events.emit(.upstreamCertificateRejected(
-                host: host, reason: reason, isNameMismatch: isNameMismatch
-            ))
-        } else if InterceptHandler.looksLikeClientCertificateRequest(error) {
-            // The origin wants a certificate only the user's keychain holds.
-            // Interception cannot satisfy that, so remember and tunnel next time.
-            onClientCertificateRequired(host)
-            events.emit(.clientCertificateRequired(host: host))
-        } else {
-            events.emit(.failed(host: host, message: "\(error)"))
-        }
-        context.close(promise: nil)
-    }
-}
-
-/// Bridges the decrypted client session to the decrypted origin session.
-///
-/// Waits for the client handshake before dialling upstream. A client that refuses our
-/// certificate never gets that far, and the failure surfaces as an error rather than
-/// as a connection to an origin nobody is going to talk to.
+/// The upstream connection already exists by the time this runs, so the only thing
+/// left to decide is which pair of pipelines to install. A client that refuses our
+/// certificate never reaches the handshake, and that failure is what identifies a
+/// pinned target.
 final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
     typealias InboundIn = ByteBuffer
     typealias InboundOut = ByteBuffer
     typealias OutboundOut = ByteBuffer
 
     private let target: (host: String, port: Int)
-    private let materials: TLSInterception.Materials
-    private let group: EventLoopGroup
-    private let events: EventSink
-    private let engine: FilterEngine?
+    private let upstream: Channel
+    private let negotiated: NegotiatedProtocol
+    private let engine: FilterEngine
     private let cosmetic: CosmeticEngine?
-    private let requestContext = RequestContext()
+    private let events: EventSink
     private let onPinningDetected: @Sendable (String) -> Void
 
-    private var upstream: Channel?
     private var pending: [ByteBuffer] = []
+    private var ready = false
     private var handshakeDone = false
     private var failed = false
-    /// True once the HTTP handlers are installed downstream and reads may flow on.
-    private var ready = false
 
     init(
         target: (host: String, port: Int),
-        materials: TLSInterception.Materials,
-        group: EventLoopGroup,
-        events: EventSink,
-        engine: FilterEngine?,
+        upstream: Channel,
+        negotiated: NegotiatedProtocol,
+        engine: FilterEngine,
         cosmetic: CosmeticEngine?,
+        events: EventSink,
         onPinningDetected: @escaping @Sendable (String) -> Void
     ) {
         self.target = target
-        self.materials = materials
-        self.group = group
-        self.events = events
+        self.upstream = upstream
+        self.negotiated = negotiated
         self.engine = engine
         self.cosmetic = cosmetic
+        self.events = events
         self.onPinningDetected = onPinningDetected
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        if case TLSUserEvent.handshakeCompleted = event {
+        if case TLSUserEvent.handshakeCompleted = event, !handshakeDone {
             handshakeDone = true
-            connectUpstream(context: context)
+            install(context: context)
         }
         context.fireUserInboundEventTriggered(event)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         guard ready else {
-            // Decrypted bytes can arrive before the origin session is up; holding them
-            // is the difference between a working first request and a truncated one.
+            // Decrypted bytes can arrive before the pipelines are in place; holding
+            // them is the difference between a working first request and a truncated
+            // one.
             pending.append(unwrapInboundIn(data))
             return
         }
@@ -239,102 +188,69 @@ final class InterceptHandler: ChannelInboundHandler, RemovableChannelHandler {
         } else {
             events.emit(.failed(host: target.host, message: "\(error)"))
         }
-        upstream?.close(promise: nil)
+        upstream.close(promise: nil)
         context.close(promise: nil)
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        upstream?.close(promise: nil)
+        upstream.close(promise: nil)
         context.fireChannelInactive()
     }
 
-    private func connectUpstream(context: ChannelHandlerContext) {
+    private func install(context: ChannelHandlerContext) {
         let client = context.channel
-        let loop = context.eventLoop
-        let events = self.events
         let host = target.host
-        let materials = self.materials
-        let onPinning = self.onPinningDetected
-        // No engine loaded is the first-launch state: traffic is parsed and forwarded,
-        // nothing matches — precisely what "no list chosen yet" should do.
-        let engineOrEmpty = self.engine ?? FilterEngine(rules: "")
+        let events = self.events
+        let engine = self.engine
         let cosmetic = self.cosmetic
-        let requestContext = self.requestContext
 
-        let verificationOutcome = NIOLockedValueBox<SystemTrustVerifier.Result?>(nil)
-
-        ClientBootstrap(group: group)
-            .channelInitializer { upstream in
-                do {
-                    let configuration = TLSInterception.clientConfiguration()
-                    let sslContext = try NIOSSLContext(configuration: configuration)
-                    let callback = TLSInterception.makeVerificationCallback(
-                        hostname: host,
-                        materials: materials
-                    ) { result in
-                        verificationOutcome.withLockedValue { $0 = result }
-                    }
-                    let tls = try NIOSSLClientHandler(
-                        context: sslContext,
-                        serverHostname: Self.sniName(for: host),
-                        customVerificationCallback: callback
-                    )
-                    return upstream.pipeline.addHandlers([
-                        tls,
-                        UpstreamDiagnosticHandler(
-                            host: host, events: events, outcome: verificationOutcome,
-                            onClientCertificateRequired: onPinning
-                        ),
-                        HTTPRequestEncoder(),
-                        ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
-                        ResponseInjectingHandler(
-                            client: client, host: host, cosmetic: cosmetic,
-                            context: requestContext, events: events
-                        ),
-                    ])
-                } catch {
-                    return upstream.eventLoop.makeFailedFuture(error)
-                }
+        let installed: EventLoopFuture<Void>
+        switch negotiated {
+        case .http2:
+            installed = HTTP2Bridge.install(
+                client: client, upstream: upstream, host: host,
+                engine: engine, cosmetic: cosmetic, events: events
+            )
+        case .http1:
+            let requestContext = RequestContext()
+            installed = upstream.pipeline.addHandlers([
+                HTTPRequestEncoder(),
+                ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes)),
+                ResponseInjectingHandler(
+                    client: client, host: host, cosmetic: cosmetic,
+                    context: requestContext, events: events
+                ),
+            ])
+            .flatMap {
+                client.pipeline.addHandlers([
+                    HTTPResponseEncoder(),
+                    ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
+                    HTTPFilteringHandler(
+                        engine: engine, host: host, upstream: self.upstream,
+                        events: events, requestContext: requestContext
+                    ),
+                ])
             }
-            .connect(host: target.host, port: target.port)
-            .hop(to: loop)
-            .whenComplete { result in
-                switch result {
-                case .success(let upstream):
-                    self.upstream = upstream
-                    events.emit(.intercepted(host: host))
+        }
 
-                    // Decrypted bytes stop being opaque here: both sides are parsed, so
-                    // the engine sees requests and the injection layer will later see
-                    // responses without another round of parsing.
-                    //
-                    // The handlers are appended at the tail, which is already after this
-                    // one. This handler stays in place rather than removing itself: the
-                    // buffered bytes have to be re-delivered *downstream* of the TLS
-                    // handler, and only a context positioned here can do that.
-                    // `pipeline.fireChannelRead` starts at the head, which would feed
-                    // already-decrypted bytes back into TLS.
-                    client.pipeline.addHandlers([
-                        HTTPResponseEncoder(),
-                        ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)),
-                        HTTPFilteringHandler(
-                            engine: engineOrEmpty, host: host, upstream: upstream,
-                            events: events, requestContext: requestContext
-                        ),
-                    ]).whenComplete { _ in
-                        self.ready = true
-                        for buffer in self.pending {
-                            context.fireChannelRead(self.wrapInboundOut(buffer))
-                        }
-                        self.pending.removeAll()
-                    }
-                case .failure(let error):
-                    // Reaching here means TCP itself failed; a TLS rejection surfaces
-                    // on the channel instead, in UpstreamDiagnosticHandler.
-                    events.emit(.failed(host: host, message: "\(error)"))
-                    client.close(promise: nil)
+        installed.whenComplete { result in
+            switch result {
+            case .success:
+                events.emit(.intercepted(host: host, negotiated: self.negotiated.rawValue))
+                self.ready = true
+                // Replayed through this handler's own context: it is the only position
+                // downstream of TLS and upstream of the new handlers. Firing from the
+                // pipeline head would feed decrypted bytes back into TLS.
+                for buffer in self.pending {
+                    context.fireChannelRead(self.wrapInboundOut(buffer))
                 }
+                self.pending.removeAll()
+            case .failure(let error):
+                events.emit(.failed(host: host, message: "\(error)"))
+                self.upstream.close(promise: nil)
+                client.close(promise: nil)
             }
+        }
     }
 
     /// An address is not a valid SNI value, and sending one makes some origins abort.
