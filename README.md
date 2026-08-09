@@ -24,7 +24,7 @@ only uBO Lite, with a hard cap on rules. Tamis sits below the browser instead, s
 unaffected by either, and covers the applications an extension can never reach.
 
 Measured against EasyList and EasyPrivacy: **115 532 network rules** and **24 177
-cosmetic rules** parsed with no errors, matching in **131 µs** per request. Against the
+cosmetic rules** parsed with no errors, matching in **136 µs** per request. Against the
 whole suggested selection — eleven lists, 456 183 lines — 300 841 network rules and
 273 739 blocked domains.
 
@@ -188,6 +188,7 @@ root:
 | | |
 |---|---|
 | Filter engine — network and cosmetic | done |
+| Public Suffix List — the real one, official suite passing | done |
 | DNS resolver, encrypted upstream, cache | done |
 | Certificate authority and leaf issuance | done |
 | Proxy: CONNECT, TLS interception, filtering, injection | done |

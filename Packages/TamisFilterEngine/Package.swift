@@ -10,6 +10,7 @@ let package = Package(
     targets: [
         .target(
             name: "TamisFilterEngine",
+            resources: [.copy("Resources")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
@@ -20,6 +21,7 @@ let package = Package(
         .testTarget(
             name: "TamisFilterEngineTests",
             dependencies: ["TamisFilterEngine"],
+            resources: [.copy("Resources")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
