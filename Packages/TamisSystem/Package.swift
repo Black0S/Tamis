@@ -19,6 +19,11 @@ let package = Package(
             dependencies: ["TamisSystem"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .executableTarget(
+            name: "tamis-pac",
+            dependencies: ["TamisSystem"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "TamisSystemTests",
             dependencies: ["TamisSystem"],

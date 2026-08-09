@@ -269,6 +269,7 @@ root:
 | Installation plan — what changes, what undoes it | done |
 | launchd jobs and the PAC file the plan installs | done |
 | Installer and uninstaller — dry run by default | done |
+| PAC helper — outlives the app, fails open | done |
 | Applying the plan, onboarding, uninstall, app updates | not started |
 | HTTP/2 | done |
 | SwiftUI application — all eight screens | done |
