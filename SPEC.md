@@ -307,8 +307,21 @@ négligeable : les sites qui servent effectivement du brotli perdent **de +13 % 
 grands sites (Le Monde, Wikipédia, GitHub, Le Figaro) servent du gzip même quand le
 navigateur propose brotli — coût nul pour eux.
 
-**zstd reste exclu** : le framework ne l'implémente pas, et aucune origine mesurée ne
-l'a choisi face à brotli ou gzip.
+**zstd reste exclu**, et c'est vérifié plutôt que supposé :
+
+- `COMPRESSION_ZSTD` n'existe pas ; le framework expose BROTLI, LZ4, LZBITMAP, LZFSE,
+  LZMA, ZLIB. Aucune `libzstd` n'est présente sur le système
+- Sur **dix sites testés**, aucun ne sert de zstd — pas même ceux de Cloudflare, qui le
+  supportent pourtant. Avec l'en-tête complet d'un navigateur ils choisissent tous
+  brotli ou gzip ; avec `zstd` seul ils retombent en `identity`
+- L'ajouter imposerait de vendoriser un décompresseur C dans un processus dont toute
+  l'entrée est hostile — le compromis refusé pour brotli, sans l'implémentation Apple
+  pour l'éviter
+
+**À instrumenter :** une origine qui enverrait du zstd malgré notre `Accept-Encoding`
+verrait sa page privée de filtrage cosmétique, silencieusement. Le verdict
+`undecodableEncoding` doit donc alimenter un compteur du panneau diagnostic — c'est ce
+qui transformera cette hypothèse en observation le jour où elle cessera d'être vraie.
 
 **Borne obligatoire au décodage.** Quelques kilo-octets de gzip peuvent devenir des
 gigaoctets ; un décodeur non borné est un déni de service muni d'un en-tête
