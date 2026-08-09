@@ -67,6 +67,16 @@ swift run -c release --package-path Packages/TamisFilterEngine tamis-bench easyl
 Reports how much of a list is really enforced, how many rules land in the
 always-checked bucket, and how long a match takes.
 
+### The application
+
+```bash
+Scripts/bundle-app.sh && open build/Tamis.app
+```
+
+Builds `Tamis.app` and signs it ad hoc — no certificate, no account. It is the interface
+only for now: the window and the menu bar panel are real, nothing is wired to the engine
+behind them yet.
+
 ## Build and test
 
 ```bash
@@ -127,7 +137,7 @@ root:
 | Proxy: CONNECT, TLS interception, filtering, injection | done |
 | User scripts and user styles | done |
 | HTTP/2 | written, not enabled — see below |
-| SwiftUI application | not started |
+| SwiftUI application | shell only — navigation and dashboard, no engine behind it |
 | Onboarding, uninstall, privileged daemon | not started |
 
 HTTP/2 negotiates on both sides and the bridge installs, but response frames are not
