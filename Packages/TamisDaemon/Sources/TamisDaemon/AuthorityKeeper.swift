@@ -68,16 +68,31 @@ public final class AuthorityKeeper: @unchecked Sendable {
         }
     }
 
-    /// The key at 0600, the certificate not — locking both would hide which of the two
-    /// the security actually rests on.
+    /// The key at 0600, the certificate at 0644 — and the directory traversable, which
+    /// is the part that used to be wrong.
+    ///
+    /// The comment here claimed the certificate was left unrestricted while the line
+    /// below locked the directory to 0700, which restricted it just as effectively. It
+    /// mattered: adding a root to the admin trust domain needs `authenticate-admin`,
+    /// which only works from a session that can show a dialog — so the trust step runs
+    /// as the user, and a certificate root alone can read is a certificate that step
+    /// cannot hand to `security`.
     private func write(certificateDER: [UInt8], keyDER: [UInt8]) throws {
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
+                attributes: [.posixPermissions: 0o755]
+            )
+            // Set again on every write: `createDirectory` does nothing to a directory
+            // that already exists, so an install over a 0700 one would keep it.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path(percentEncoded: false)
             )
             try Data(certificateDER).write(to: certificateURL, options: .atomic)
             try Data(keyDER).write(to: keyURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: certificateURL.path(percentEncoded: false)
+            )
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600], ofItemAtPath: keyURL.path(percentEncoded: false)
             )

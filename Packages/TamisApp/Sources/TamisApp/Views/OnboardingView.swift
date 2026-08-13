@@ -104,8 +104,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(model.changes) { change in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: change.scope == .administrator
-                                  ? "lock.fill" : "person.fill")
+                            Image(systemName: symbol(change.scope))
                                 .foregroundStyle(.secondary).font(.caption).frame(width: 14)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(change.title).fontWeight(.medium)
@@ -138,20 +137,43 @@ struct OnboardingView: View {
     private var authorise: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Votre mot de passe").font(.title2)
+            // It used to promise a single prompt. macOS guards the trust store with an
+            // authorisation right that can only be satisfied by authenticating in a
+            // session able to show a dialog, which the batch is not — so the count is
+            // two, and saying "one" would be the kind of small lie that makes the rest
+            // of these screens not worth reading.
             Text("""
-            macOS va vous le demander **une seule fois**, pour appliquer les \
-            modifications administrateur en un seul lot.
+            macOS va vous le demander **deux fois**, et les deux demandes sont \
+            différentes.
             """)
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text("**Les fichiers et les services** — un seul lot, via `osascript`.")
+                } icon: { Text("1.").monospacedDigit().foregroundStyle(.secondary) }
+                Label {
+                    // One literal, not a concatenation: `Text` only parses markdown in
+                    // a literal, and a joined string renders its asterisks verbatim.
+                    Text("""
+                    **L'autorité de certification** — macOS pose lui-même la question, \
+                    et nomme le certificat qu'il va approuver.
+                    """)
+                } icon: { Text("2.").monospacedDigit().foregroundStyle(.secondary) }
+            }
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+
             Text("Si vous annulez, rien n'aura changé.").foregroundStyle(.secondary)
 
             DisclosureGroup("Voir les commandes exactes") {
                 ScrollView {
-                    Text(model.installer.privilegedScript())
+                    Text(model.installer.privilegedScript()
+                         + "\n\n# Puis, séparément, sans osascript :\n"
+                         + model.installer.trustCommand())
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 220)
+                .frame(maxHeight: 200)
             }
             Spacer()
         }
@@ -190,6 +212,20 @@ struct OnboardingView: View {
                         Text(failure).font(.callout).foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        // When the undo could not finish, the commands to finish it by
+                        // hand are worth more than an apology.
+                        if !model.residue.isEmpty {
+                            Divider()
+                            Text("Ceci subsiste sur le Mac. À retirer à la main :")
+                                .font(.callout)
+                            ForEach(model.residue) { change in
+                                Text(change.undoCommand)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(4)
@@ -226,15 +262,51 @@ struct OnboardingView: View {
             """)
             .foregroundStyle(.secondary)
 
-            // The checks belong to the running installation, which does not exist until
-            // the joint first install. Saying so beats a row of ticks that mean nothing.
-            GroupBox {
-                Label("Ces essais s'exécuteront lors de la première installation réelle.",
-                      systemImage: "info.circle")
-                    .foregroundStyle(.secondary)
-                    .padding(4)
+            if model.isVerifying {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Essais en cours…").foregroundStyle(.secondary)
+                }
             }
-            Spacer()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.checks) { check in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label(check.title,
+                                      systemImage: check.passed
+                                          ? "checkmark.circle" : "xmark.octagon")
+                                    .foregroundStyle(check.passed ? .green : .red)
+                                    .fontWeight(.medium)
+                                Text(check.detail)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                // Shown only when it failed: what it means is what
+                                // somebody needs at the moment it goes wrong, and
+                                // printing it beside every tick would train people to
+                                // skip it.
+                                if !check.passed {
+                                    Text(check.matters).font(.callout)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(4)
+                        }
+                    }
+                }
+            }
+
+            if model.verificationFailed {
+                Label("Un essai a échoué. Le bouton « Réessayer » relance les cinq.",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Réessayer") { Task { await model.verify() } }
+            }
         }
     }
 
@@ -295,6 +367,16 @@ struct OnboardingView: View {
         case .authorise: "Installer"
         case .done:      "Ouvrir Tamis"
         default:         "Continuer"
+        }
+    }
+
+    /// Three states, not two: a change can touch nothing outside the user's own account
+    /// and still stop to ask them.
+    private func symbol(_ scope: SystemChange.Scope) -> String {
+        switch scope {
+        case .administrator: "lock.fill"
+        case .sessionOwner:  "person.badge.key.fill"
+        case .user:          "person.fill"
         }
     }
 

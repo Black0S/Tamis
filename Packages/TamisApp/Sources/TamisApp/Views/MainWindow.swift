@@ -88,12 +88,25 @@ struct MainWindow: View {
         // Offered rather than forced: the window works before installation, and a
         // first-run sheet nobody can dismiss is a first-run sheet people resent.
         .sheet(isPresented: $isOnboarding) {
-            OnboardingView(onFinish: { isOnboarding = false })
+            // The machine is read again on the way out: the flow may have installed
+            // something, and the dashboard used to keep saying it had not.
+            OnboardingView(onFinish: {
+                isOnboarding = false
+                state.refreshInstallationState()
+            })
         }
         // Before anything is shown, so no screen opens on a state it invented.
         .task {
+            state.refreshInstallationState()
             await lists.reload()
             engines.rebuild()
+        }
+        // And again when the window comes back to the front, because the install can
+        // also be undone from a terminal while the app is open.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in
+            state.refreshInstallationState()
         }
     }
 

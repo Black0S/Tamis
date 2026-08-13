@@ -124,7 +124,11 @@ public struct LaunchdJob: Sendable, Equatable {
             label: Installation.resolverLabel,
             kind: .daemon,
             executable: executable,
-            arguments: ["--launchd-socket", "Resolver"],
+            // `--socket`, spelled as the binary's parser spells it. It read
+            // `--launchd-socket` for a while, which `tamis-dnsd` rejects outright: the
+            // job spawned, exited 2, and launchd retried for ever — with the system
+            // DNS already pointed at a resolver that would never answer.
+            arguments: ["--socket", "Resolver"],
             sockets: [Socket(name: "Resolver", port: port, isUDP: true)]
         )
     }

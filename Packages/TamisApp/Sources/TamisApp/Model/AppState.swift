@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import TamisSystem
 
 /// Whether Tamis is protecting anything, which is the one piece of state that belongs
 /// to no single screen.
@@ -23,6 +24,21 @@ final class AppState {
     }
 
     var protection: Protection = .notConfigured
+
+    /// Whether Tamis is installed on this Mac, as of the last time anybody looked.
+    ///
+    /// Held here rather than read from `Installation.isInstalled` inside a view body.
+    /// That property reads the filesystem, which is not observable, so SwiftUI had no
+    /// reason to redraw when it changed — the dashboard went on saying "Tamis n'est pas
+    /// installé" through a successful installation, which is the same class of error as
+    /// a rollback that reports success without looking.
+    private(set) var isInstalled = Installation.isInstalled
+
+    /// Reads the machine again. Called when the window appears, when it comes back to
+    /// the front, and when the first-run flow closes.
+    func refreshInstallationState() {
+        isInstalled = Installation.isInstalled
+    }
 }
 
 extension AppState {

@@ -53,6 +53,14 @@ final class OnboardingModel {
     private(set) var isWorking = false
     private(set) var failure: String?
 
+    /// What a rollback could not remove. Empty is the normal case; when it is not, the
+    /// screen shows the exact commands rather than leaving the user to guess.
+    private(set) var residue: [SystemChange] = []
+
+    /// The five checks of the last screen, once they have actually run.
+    private(set) var checks: [Verification.Check] = []
+    private(set) var isVerifying = false
+
     /// The exact commands the password will authorise. Shown, not summarised.
     private(set) var script = ""
 
@@ -97,7 +105,22 @@ final class OnboardingModel {
         guard let next = Step(rawValue: step.rawValue + 1) else { return }
         step = next
         if next == .preflight { report = Preflight.run() }
+        if next == .verify { Task { await verify() } }
     }
+
+    /// Runs the five checks against the machine, for real.
+    ///
+    /// The screen used to say they "will run at the first real installation" and then
+    /// never ran them. An unkept promise of verification is worse than none: it leaves
+    /// somebody more confident than silence would have.
+    func verify() async {
+        isVerifying = true
+        defer { isVerifying = false }
+        checks = await Verification.run()
+    }
+
+    /// Whether anything the checks found should stop the flow reading as a success.
+    var verificationFailed: Bool { checks.contains { !$0.passed } }
 
     func back() {
         guard let previous = Step(rawValue: step.rawValue - 1) else { return }
@@ -120,6 +143,7 @@ final class OnboardingModel {
         isWorking = true
         failure = nil
         operations = []
+        residue = []
         defer { isWorking = false }
 
         var live = installer
@@ -132,6 +156,14 @@ final class OnboardingModel {
             script = live.privilegedScript()
             try await runPrivileged(script)
             operations.append(Operation(description: "Modifications système appliquées", succeeded: true))
+
+            // Second prompt, raised by macOS itself. It cannot be folded into the batch
+            // above: the admin trust domain requires `authenticate-admin`, and the
+            // session `osascript` creates has no way to authenticate anything. See
+            // ``Installer/trustCommand``.
+            try live.trustAuthority()
+            operations.append(Operation(description: "Autorité marquée de confiance (SSL uniquement)",
+                                        succeeded: true))
             step = .browsers
         } catch {
             failure = "\(error)"
@@ -172,6 +204,17 @@ final class OnboardingModel {
         }
     }
 
+    /// Undoes what was done, then **checks**, and reports what it finds.
+    ///
+    /// This used to append "le Mac est revenu à son état initial" with `succeeded:
+    /// true` no matter what happened, swallowing the undo's own failure with `try?`. A
+    /// real failed install proved how bad that was: the install stopped before the step
+    /// that claimed the privileged directory, so nothing removed it, and the screen
+    /// said the Mac was clean while root-owned binaries sat in
+    /// `/Library/Application Support/Tamis`.
+    ///
+    /// A rollback that asserts its own success is worth less than no rollback at all,
+    /// because it stops the one person who could fix it from looking.
     private func rollback() async {
         var live = installer
         live.isDryRun = false
@@ -179,7 +222,18 @@ final class OnboardingModel {
 
         let undo = live.uninstallScript()
         if !undo.isEmpty { try? await runPrivileged(undo) }
-        operations.append(Operation(description: "Annulé — le Mac est revenu à son état initial",
-                                    succeeded: true))
+
+        // Detection reads the machine; it does not trust the log we just wrote.
+        let remaining = Installation.applied()
+        if remaining.isEmpty {
+            operations.append(Operation(description: "Annulé — le Mac est revenu à son état initial",
+                                        succeeded: true))
+        } else {
+            residue = remaining
+            operations.append(Operation(
+                description: "Annulation incomplète — \(remaining.count) élément(s) subsistent",
+                succeeded: false
+            ))
+        }
     }
 }

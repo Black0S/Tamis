@@ -20,7 +20,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header
 
-                if !TamisSystem.Installation.isInstalled { notInstalledNotice }
+                if !state.isInstalled { notInstalledNotice }
 
                 if lists.enabledCount == 0 {
                     NoListsNotice(onChooseLists: onChooseLists)

@@ -48,7 +48,7 @@ public struct AuthorityStore: Sendable {
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
+                attributes: [.posixPermissions: 0o755]
             )
             try Data(certificatePEM.utf8).write(to: certificateURL, options: .atomic)
             try Data(privateKeyDER).write(to: privateKeyURL, options: [.atomic, .completeFileProtection])

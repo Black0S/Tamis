@@ -20,9 +20,14 @@ struct InstallerTests {
         #expect(!outcomes.contains { !$0.succeeded })
         #expect(outcomes.allSatisfy { $0.message.hasPrefix("écrirait") })
 
+        // Asked as a difference rather than an absolute: this suite also runs on a Mac
+        // where Tamis is genuinely installed, and a staging directory that was already
+        // there is not evidence the dry run made one.
         let staging = Installation.supportDirectory.appending(path: "staging")
-        #expect(!FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)),
-                "un essai à blanc a créé des fichiers")
+        let existedBefore = FileManager.default.fileExists(atPath: staging.path(percentEncoded: false))
+        _ = try installer().stagePlists()
+        let existsAfter = FileManager.default.fileExists(atPath: staging.path(percentEncoded: false))
+        #expect(existedBefore == existsAfter, "un essai à blanc a créé des fichiers")
     }
 
     /// The user is trusting a script they were shown. It has to be readable, and it has
@@ -34,7 +39,6 @@ struct InstallerTests {
         // Getting those the wrong way round produces a command that fails at install
         // time and nowhere earlier.
         for expected in [
-            "security add-trusted-cert",
             "launchctl bootstrap system '/Library/LaunchDaemons/\(Installation.resolverLabel).plist'",
             "networksetup -setautoproxyurl",
         ] {
@@ -46,9 +50,36 @@ struct InstallerTests {
     /// code, e-mail and timestamps, none of which Tamis has any business doing.
     @Test("The authority is trusted only for SSL")
     func authorityScope() {
-        let script = installer().privilegedScript()
-        #expect(script.contains("-p ssl"))
-        #expect(script.contains("-r trustRoot"))
+        let command = installer().trustCommand()
+        #expect(command.contains("-p ssl"))
+        #expect(command.contains("-r trustRoot"))
+    }
+
+    /// Found by running the install for real. `com.apple.trust-settings.admin` is
+    /// `k-of-n: 1` over `entitled` / `authenticate-admin`: the first needs an Apple
+    /// entitlement this project cannot have, and the second needs to authenticate,
+    /// which needs a dialog. `do shell script … with administrator privileges` runs as
+    /// root in a session that can show none, so the right is refused before anyone is
+    /// asked — `SecTrustSettingsSetTrustSettings: The authorization was denied since no
+    /// user interaction was possible`. Root was never the missing piece.
+    @Test("The trust step is not in the batch, because it cannot work there")
+    func trustIsNotBatched() {
+        #expect(!installer().privilegedScript().contains("security add-trusted-cert"),
+                "la commande de confiance est revenue dans le lot osascript")
+        #expect(installer().trustCommand().contains("security add-trusted-cert"))
+        // Wrapping it is exactly what broke it.
+        #expect(!installer().trustCommand().contains("osascript"))
+    }
+
+    /// The daemon writes it at 0644 in a 0755 directory so an unprivileged process can
+    /// read it. The trust step is unprivileged; a root-only certificate is one it
+    /// cannot hand to `security`.
+    @Test("The trust step reads the certificate the daemon writes")
+    func trustReadsTheDaemonsCertificate() {
+        #expect(installer().trustCommand().contains(
+            Installation.privilegedDirectory.appending(path: "Authority/ca.der")
+                .path(percentEncoded: false)
+        ))
     }
 
     /// Generating property list contents inside a shell heredoc would turn a path
@@ -67,9 +98,7 @@ struct InstallerTests {
     func proxyLast() throws {
         let script = installer().privilegedScript()
         let proxy = try #require(script.range(of: "networksetup -setautoproxyurl"))
-        let certificate = try #require(script.range(of: "security add-trusted-cert"))
         let resolver = try #require(script.range(of: Installation.resolverLabel))
-        #expect(proxy.lowerBound > certificate.lowerBound)
         #expect(proxy.lowerBound > resolver.lowerBound)
     }
 
@@ -146,14 +175,14 @@ struct PrivilegedLocationTests {
             ) as? [String: Any]
             let path = try #require((arguments?["ProgramArguments"] as? [String])?.first)
             #expect(!path.contains(".app/"), "\(job.label) est lancé depuis le bundle")
-            #expect(path.hasPrefix(Installation.privilegedDirectory.path(percentEncoded: false)))
+            #expect(path.hasPrefix(Installation.privilegedPath))
         }
     }
 
     @Test("The script copies the binaries out and makes them root-owned")
     func scriptCopiesBinaries() {
         let script = installer.privilegedScript()
-        let directory = Installation.privilegedDirectory.path(percentEncoded: false)
+        let directory = Installation.privilegedPath
         #expect(script.contains("cp '/Applications/Tamis.app/Contents/MacOS/tamis-dnsd' '\(directory)/tamis-dnsd'"))
         #expect(script.contains("chown -R root:wheel '\(directory)'"))
         #expect(script.contains("chmod 755"))
@@ -161,13 +190,66 @@ struct PrivilegedLocationTests {
 
     /// The copies are outside the bundle, so deleting the application cannot remove
     /// them — which means the uninstall has to, or they stay for ever.
-    @Test("The uninstall removes the copies it made")
-    func uninstallRemovesCopies() {
-        // Carried by the resolver step now that the daemon step is gone. Nothing else
-        // would remove them, and they are outside the bundle.
-        let resolver = try? #require(Installation.plan().first { $0.id == "resolver" })
-        #expect(resolver?.undoCommand.contains(Installation.privilegedDirectory.path(percentEncoded: false)) == true)
-        #expect(resolver?.paths.contains(Installation.privilegedDirectory) == true)
+    /// Carried by the step that *creates* the directory, which is the daemon. It used
+    /// to hang off the resolver, and a real failed install showed the cost: the script
+    /// died at the trust step, so the resolver step never ran, so nothing owned the
+    /// removal — and the rollback reported a clean Mac with root-owned binaries still
+    /// in `/Library/Application Support/Tamis`.
+    @Test("The step that creates the privileged directory is the step that removes it")
+    func uninstallRemovesCopies() throws {
+        let directory = Installation.privilegedPath
+        let daemon = try #require(Installation.plan().first { $0.id == "daemon" })
+        #expect(daemon.undoCommand.contains(directory))
+        #expect(daemon.paths.contains(Installation.privilegedDirectory))
+
+        // And nowhere else, or two steps race to delete the same tree.
+        let others = Installation.plan().filter { $0.id != "daemon" }
+        #expect(!others.contains { $0.undoCommand.contains("rm -rf '\(directory)'") })
+    }
+
+    /// The residue state this bug left behind: a privileged directory whose property
+    /// list is gone. Reporting that as "not applied" is what makes it permanent.
+    @Test("A privileged directory without its property list still counts as installed")
+    func directoryAloneIsDetected() throws {
+        let daemon = try #require(Installation.plan().first { $0.id == "daemon" })
+        let directoryExists = FileManager.default.fileExists(
+            atPath: Installation.privilegedPath
+        )
+        let plistExists = FileManager.default.fileExists(
+            atPath: "/Library/LaunchDaemons/\(Installation.daemonLabel).plist"
+        )
+        #expect(daemon.isApplied == (directoryExists || plistExists))
+    }
+
+    /// Undo runs backwards, so the resolver is booted out before the directory holding
+    /// its binary is deleted.
+    /// Asked over the whole plan rather than over whatever this Mac happens to have
+    /// installed. Read from the live system, this test returned early on a clean
+    /// machine and proved nothing — the ordering bug it exists to catch would have
+    /// sailed through a green suite.
+    @Test("The uninstall reverses the order of the install")
+    func uninstallIsReversed() throws {
+        let plan = Installation.plan()
+        let script = installer.uninstallScript(for: plan)
+        let privileged = plan.filter { $0.scope == .administrator }
+
+        let positions = privileged.compactMap { change -> (String.Index, String)? in
+            script.range(of: change.undoCommand).map { ($0.lowerBound, change.id) }
+        }
+        #expect(positions.count == privileged.count, "une commande d'annulation manque")
+
+        let scriptOrder = positions.sorted { $0.0 < $1.0 }.map { $0.1 }
+        #expect(scriptOrder == Array(privileged.map(\.id).reversed()))
+    }
+
+    /// The consequence that ordering exists for: the resolver's binary lives inside
+    /// the directory the daemon step deletes, so booting it out has to come first.
+    @Test("The resolver is booted out before its binary is deleted")
+    func resolverLeavesBeforeItsDirectory() throws {
+        let script = installer.uninstallScript(for: Installation.plan())
+        let bootout = try #require(script.range(of: "bootout system/\(Installation.resolverLabel)"))
+        let removal = try #require(script.range(of: "rm -rf '\(Installation.privilegedPath)'"))
+        #expect(bootout.lowerBound < removal.lowerBound)
     }
 
     /// Pointing DNS at Tamis is what makes the resolver cover the whole machine, and
@@ -194,13 +276,15 @@ struct ScriptOrderingTests {
     ).privilegedScript()
 
     /// The authority does not exist when the script starts: `tamisd` creates it the
-    /// first time launchd runs it, which happens inside this script. Trusting a file
-    /// before the process that writes it has started would trust nothing.
-    @Test("The daemon starts before the certificate is trusted")
-    func daemonBeforeTrust() throws {
+    /// first time launchd runs it, which happens inside this script. The trust step
+    /// runs after the whole batch, so what matters here is that the batch does not
+    /// finish before the certificate is on disk — otherwise the trust step would be
+    /// handed a path to nothing.
+    @Test("The batch does not finish before the certificate exists")
+    func certificateExistsBeforeTheBatchEnds() throws {
         let bootstrap = try #require(script.range(of: "launchctl bootstrap system '/Library/LaunchDaemons/\(Installation.daemonLabel).plist'"))
-        let trust = try #require(script.range(of: "security add-trusted-cert"))
-        #expect(bootstrap.lowerBound < trust.lowerBound)
+        let wait = try #require(script.range(of: "Authority/ca.der"))
+        #expect(bootstrap.lowerBound < wait.lowerBound)
     }
 
     /// A service that has been started is not a service that has finished starting.

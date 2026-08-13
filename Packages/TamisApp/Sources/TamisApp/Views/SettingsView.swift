@@ -11,7 +11,7 @@ import TamisSystem
 /// not being readable.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case general, exclusions, allowlist, about
+        case general, exclusions, allowlist, install, about
         var id: String { rawValue }
 
         var title: String {
@@ -19,6 +19,7 @@ struct SettingsView: View {
             case .general:    "Général"
             case .exclusions: "Jamais déchiffré"
             case .allowlist:  "Domaines système"
+            case .install:    "Installation"
             case .about:      "À propos"
             }
         }
@@ -28,6 +29,7 @@ struct SettingsView: View {
             case .general:    "gearshape"
             case .exclusions: "lock.shield"
             case .allowlist:  "checkmark.shield"
+            case .install:    "externaldrive"
             case .about:      "info.circle"
             }
         }
@@ -50,6 +52,7 @@ struct SettingsView: View {
             case .general:    GeneralSettings()
             case .exclusions: ExclusionsSettings()
             case .allowlist:  AllowlistSettings()
+            case .install:    UninstallView()
             case .about:      AboutSettings()
             }
         }
@@ -398,13 +401,26 @@ struct AboutSettings: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Ce qui n'est pas encore fait").font(.headline)
-                        Text("""
-                        Tamis ne s'installe pas encore : le proxy système n'est pas \
-                        configuré, le port 53 n'est pas pris, et l'autorité n'est pas \
-                        dans le trousseau. Rien de ce que vous voyez ici ne filtre votre \
-                        trafic pour l'instant.
-                        """)
+                        Text("État de l'installation").font(.headline)
+                        // Read from the machine each time this screen is drawn. It used
+                        // to be a fixed sentence saying Tamis did not install itself
+                        // yet — true when it was written, and false the moment the
+                        // first install worked. On an installed Mac it told its owner
+                        // their traffic was not being filtered while it was, which is
+                        // the wrong direction for a sentence to be wrong in.
+                        Text(Installation.isInstalled
+                             ? """
+                             Tamis est installé : \
+                             \(Installation.applied().map(\.title).joined(separator: ", ")). \
+                             L'onglet « Installation » dit exactement ce qui est en \
+                             place et permet de tout retirer.
+                             """
+                             : """
+                             Tamis n'est pas installé : le proxy système n'est pas \
+                             configuré, le port 53 n'est pas pris, et l'autorité n'est \
+                             pas dans le trousseau. Rien de ce que vous voyez ici ne \
+                             filtre votre trafic pour l'instant.
+                             """)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     }

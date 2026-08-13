@@ -15,7 +15,11 @@ let plan = Installation.plan()
 print("Ce qu'installer Tamis changerait\n")
 for change in plan {
     let state = change.isApplied ? "déjà en place" : "à faire"
-    let scope = change.scope == .administrator ? "mot de passe requis" : "sans privilège"
+    let scope = switch change.scope {
+    case .administrator: "mot de passe requis"
+    case .sessionOwner:  "votre mot de passe de session"
+    case .user:          "sans privilège"
+    }
     print("  \(change.title)   [\(state) · \(scope)]")
     print("      \(change.effect)")
     for path in change.paths {

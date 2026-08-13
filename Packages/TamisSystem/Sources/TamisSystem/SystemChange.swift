@@ -14,10 +14,23 @@ public struct SystemChange: Sendable, Identifiable {
     public enum Scope: Sendable, Equatable {
         /// Inside the user's own account. No password.
         case user
+        /// The user's own account, but macOS still asks them to confirm.
+        ///
+        /// This case exists because two installs failed for want of it. Trusting a root
+        /// is guarded by an authorisation right, and *which* right depends entirely on
+        /// the domain: the admin domain wants `authenticate-admin` and writes to a
+        /// root-owned keychain, while the user domain wants
+        /// `authenticate-session-owner` and writes to one the user owns. Calling both
+        /// "administrator" hid the difference, and the difference is the whole reason
+        /// the step works at all.
+        case sessionOwner
         /// Needs an administrator. Said plainly wherever it appears, because a password
         /// prompt with no warning is how people learn to type their password at
         /// anything that asks.
         case administrator
+
+        /// Whether macOS will interrupt the user for this one, whatever it asks for.
+        public var prompts: Bool { self != .user }
     }
 
     public let id: String
@@ -67,7 +80,7 @@ public enum Installation {
         "http://127.0.0.1:\(port)/tamis.pac"
     }
 
-    /// Where the privileged binaries live once installed.
+    /// Where the privileged binaries live once installed, as the script spells it.
     ///
     /// Not inside the application bundle, and that is not tidiness: launchd refuses to
     /// start a root daemon from a location the user can write to, and `/Applications`
@@ -75,9 +88,32 @@ public enum Installation {
     /// has a second consequence the design depends on: the daemon becomes independent
     /// of the bundle, so deleting the application cannot leave the machine with its
     /// proxy setting pointing at nothing.
-    public static let privilegedDirectory = URL(
-        fileURLWithPath: "/Library/Application Support/Tamis"
-    )
+    ///
+    /// Held as a string rather than read back out of a URL. `URL(fileURLWithPath:)`
+    /// consults the filesystem and appends a trailing slash when the path happens to be
+    /// an existing directory, so the generated script read `Tamis/tamisd` on a clean
+    /// Mac and `Tamis//tamisd` on one where an install had already run. The shell does
+    /// not care, but a script whose text depends on the state of the disk is a script
+    /// no test can pin.
+    public static let privilegedPath = "/Library/Application Support/Tamis"
+
+    public static var privilegedDirectory: URL {
+        URL(fileURLWithPath: privilegedPath, isDirectory: true)
+    }
+
+    /// The keychain the authority is trusted in — the user's own.
+    ///
+    /// Not `/Library/Keychains/System.keychain`, and the reason is worth keeping: that
+    /// file is `root:wheel`, so an unprivileged process cannot write it, while trusting
+    /// a root in the admin domain requires authenticating, which the privileged batch
+    /// cannot do. Only the user domain satisfies both halves at once — and it scopes
+    /// the authority to one account instead of the whole machine, which is the smaller
+    /// power to be handing out.
+    public static var loginKeychainPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "Library/Keychains/login.keychain-db")
+            .path(percentEncoded: false)
+    }
 
     public static var supportDirectory: URL {
         (try? FileManager.default.url(
@@ -101,13 +137,28 @@ public enum Installation {
                       + "certification. C'est lui, et lui seul, qui signe les "
                       + "certificats : le proxy — le seul composant qui lit du contenu "
                       + "hostile — les lui demande sans jamais voir la clé.",
+                // This step creates the privileged directory, so this step removes it.
+                // It used to be carried by the resolver instead, and a failed install
+                // proved why that was wrong: the install stopped before the resolver
+                // step ever ran, so nothing claimed the directory, and the rollback
+                // left root-owned binaries behind while reporting the Mac clean.
+                // Undo runs in reverse, so this fires after the resolver is booted out
+                // rather than deleting a running daemon's binary from under it.
                 undoCommand: "sudo launchctl bootout system/\(daemonLabel); "
-                           + "sudo rm /Library/LaunchDaemons/\(daemonLabel).plist",
+                           + "sudo rm -f /Library/LaunchDaemons/\(daemonLabel).plist; "
+                           + "sudo rm -rf '\(privilegedPath)'",
                 scope: .administrator,
-                paths: [URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist")],
+                paths: [
+                    URL(fileURLWithPath: "/Library/LaunchDaemons/\(daemonLabel).plist"),
+                    privilegedDirectory,
+                ],
+                // Either half counts. A directory whose plist is gone is residue, and
+                // residue that reports itself absent is residue nothing will remove.
                 detect: {
                     FileManager.default.fileExists(
                         atPath: "/Library/LaunchDaemons/\(daemonLabel).plist"
+                    ) || FileManager.default.fileExists(
+                        atPath: privilegedPath
                     )
                 }
             ),
@@ -115,13 +166,16 @@ public enum Installation {
             SystemChange(
                 id: "authority",
                 title: "Autorité de certification",
-                effect: "Ajoute une autorité racine au trousseau du système. C'est ce "
-                      + "qui permet à Tamis de lire le HTTPS — et donc ce qu'il faut "
-                      + "retirer pour qu'il ne le puisse plus. La clé privée reste dans "
+                effect: "Ajoute une autorité racine à votre trousseau de session, de "
+                      + "confiance pour SSL uniquement. C'est ce qui permet à Tamis de "
+                      + "lire le HTTPS — et donc ce qu'il faut retirer pour qu'il ne le "
+                      + "puisse plus. Elle vaut pour votre compte seul : les autres "
+                      + "comptes de ce Mac ne la voient pas. La clé privée reste dans "
                       + "le service privilégié, qui n'expose aucun moyen de la lire.",
-                undoCommand: "sudo security delete-certificate -c \"\(authorityCommonNamePrefix)\" "
-                           + "/Library/Keychains/System.keychain",
-                scope: .administrator,
+                // No sudo, and not the system keychain: this is the user's own.
+                undoCommand: "security delete-certificate -c \"\(authorityCommonNamePrefix)\" "
+                           + "'\(loginKeychainPath)'",
+                scope: .sessionOwner,
                 detect: { !installedAuthorityNames().isEmpty }
             ),
 
@@ -131,15 +185,13 @@ public enum Installation {
                 effect: "Fait écouter Tamis sur le port DNS. launchd ouvre le port et "
                       + "le transmet déjà ouvert, donc le résolveur lui-même ne tourne "
                       + "jamais en root.",
-                // Also removes the copied binaries: they live outside the bundle, so
-                // deleting the application cannot take them, and nothing else would.
+                // The copied binaries are removed by the daemon step, which is what
+                // creates the directory holding them.
                 undoCommand: "sudo launchctl bootout system/\(resolverLabel); "
-                           + "sudo rm /Library/LaunchDaemons/\(resolverLabel).plist; "
-                           + "sudo rm -rf '\(privilegedDirectory.path(percentEncoded: false))'",
+                           + "sudo rm -f /Library/LaunchDaemons/\(resolverLabel).plist",
                 scope: .administrator,
                 paths: [
                     URL(fileURLWithPath: "/Library/LaunchDaemons/\(resolverLabel).plist"),
-                    privilegedDirectory,
                 ],
                 detect: {
                     FileManager.default.fileExists(

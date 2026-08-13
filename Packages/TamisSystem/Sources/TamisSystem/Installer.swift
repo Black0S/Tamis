@@ -71,7 +71,7 @@ public struct Installer: Sendable {
         // The jobs point at the installed copies, never at the bundle.
         let daemon = LaunchdJob.privilegedDaemon(executable: installed.appending(path: "tamisd"))
         let resolver = LaunchdJob.resolver(executable: installed.appending(path: "tamis-dnsd"))
-        let directory = installed.path(percentEncoded: false)
+        let directory = Installation.privilegedPath
 
         return """
         set -e
@@ -101,10 +101,17 @@ public struct Installer: Sendable {
         done
         [ -s "$CERT" ] || { echo "l'autorité n'a pas été créée" >&2; exit 1; }
 
-        # Marquée de confiance pour SSL uniquement : une racine bonne pour tout
-        # pourrait signer du code, du courrier et des horodatages.
-        security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
-            -p ssl "$CERT"
+        # Le certificat doit être lisible sans privilège : c'est l'utilisateur, pas
+        # root, qui le présente à `security`. Reposé ici plutôt que laissé au démon
+        # parce qu'un démon qui trouve une autorité existante ne la réécrit pas — donc
+        # un Mac passé par une version antérieure garderait un dossier en 0700 et
+        # l'étape de confiance échouerait sans que rien ne l'explique.
+        chmod 755 '\(directory)/Authority'
+        chmod 644 "$CERT"
+        # `|| true` parce que `set -e` tuerait le script sur un test qui répond non.
+        [ -f '\(directory)/Authority/ca.key' ] && chmod 600 '\(directory)/Authority/ca.key' || true
+
+        # L'autorité n'est PAS marquée de confiance ici : voir ``trustCommand``.
 
         # Résolveur : launchd ouvre le port 53 et transmet le descripteur.
         cp '\(stagedPlist(for: resolver).path(percentEncoded: false))' '\(resolver.plistURL.path(percentEncoded: false))'
@@ -112,12 +119,116 @@ public struct Installer: Sendable {
         chmod 644 '\(resolver.plistURL.path(percentEncoded: false))'
         launchctl bootstrap \(resolver.domain) '\(resolver.plistURL.path(percentEncoded: false))'
 
+        # Le résolveur doit RÉPONDRE avant qu'on lui confie le DNS de la machine.
+        # « En dernier » ne suffit pas : un job qui refuse ses arguments sort en
+        # erreur, launchd le relance en boucle, et pointer le DNS vers lui laisse le
+        # Mac incapable de résoudre quoi que ce soit. C'est arrivé.
+        RESOLVER_OK=no
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if dig +short +time=1 +tries=1 @127.0.0.1 example.com >/dev/null 2>&1; then
+                RESOLVER_OK=yes; break
+            fi
+            sleep 0.5
+        done
+        if [ "$RESOLVER_OK" != yes ]; then
+            launchctl bootout \(resolver.domain)/\(Installation.resolverLabel) 2>/dev/null || true
+            rm -f '\(resolver.plistURL.path(percentEncoded: false))'
+            echo "le résolveur ne répond pas — DNS laissé intact" >&2
+            exit 1
+        fi
+
         # Réglages réseau — les seuls changements qui redirigent du trafic, en dernier.
         networksetup -listallnetworkservices | tail -n +2 | while read -r service; do
             networksetup -setautoproxyurl "$service" '\(Installation.pacURL(port: pacPort))'
             networksetup -setdnsservers "$service" 127.0.0.1 ::1
         done
         """
+    }
+
+    /// Where the daemon writes the certificate the trust step reads.
+    public var authorityCertificateURL: URL {
+        installed.appending(path: "Authority/ca.der")
+    }
+
+    /// Marking the authority as trusted — the one step that cannot be batched.
+    ///
+    /// **Why this is separate, and why there is a second password prompt.** macOS
+    /// guards the admin trust domain with the `com.apple.trust-settings.admin`
+    /// authorisation right, whose rule is one-of `entitled` or `authenticate-admin`.
+    /// The first needs a signed binary carrying an Apple entitlement, which a project
+    /// with no developer account cannot have. The second needs to *authenticate*, and
+    /// authenticating needs a dialog.
+    ///
+    /// `do shell script … with administrator privileges` runs as root in a session with
+    /// no way to present one, so the right is refused before anyone is asked — the
+    /// failure is `SecTrustSettingsSetTrustSettings: The authorization was denied since
+    /// no user interaction was possible`. Being root is not the missing piece and no
+    /// amount of privilege in that batch would supply it.
+    ///
+    /// So this runs from the user's own session instead, unprivileged, and lets macOS
+    /// raise its own prompt. That prompt is better than the one it replaces: it names
+    /// the certificate being trusted, where `osascript` could only say that `osascript`
+    /// wanted to make changes.
+    ///
+    /// **And it targets the user's keychain, not the system's.** Moving the command out
+    /// of the batch was necessary but not sufficient: `-d` writes to
+    /// `/Library/Keychains/System.keychain`, which is `root:wheel`, so the unprivileged
+    /// process that can finally authenticate cannot write the file —
+    /// `SecCertificateAddToKeychain: Write permissions error`. Root could write it but
+    /// could not authenticate; the user can authenticate but could not write it. Only
+    /// the user domain closes both halves: `com.apple.trust-settings.user` asks for
+    /// `authenticate-session-owner`, and the login keychain belongs to the person
+    /// answering.
+    ///
+    /// The consequence is stated rather than hidden: the authority is trusted for this
+    /// account only. Other accounts on the Mac do not get filtering — and do not get a
+    /// root certificate installed behind their backs either, which is the better half
+    /// of the trade.
+    public func trustCommand() -> String {
+        "security add-trusted-cert -r trustRoot -k '\(Installation.loginKeychainPath)' "
+            + "-p ssl '\(authorityCertificateURL.path(percentEncoded: false))'"
+    }
+
+    /// Runs ``trustCommand`` and lets macOS do the asking.
+    ///
+    /// Deliberately not wrapped in `osascript`: wrapping it is what broke it.
+    public func trustAuthority() throws {
+        guard !isDryRun else { return }
+        let path = authorityCertificateURL.path(percentEncoded: false)
+        guard FileManager.default.isReadableFile(atPath: path) else {
+            // The daemon writes it at 0644 in a 0755 directory precisely so this works
+            // without privileges. If it is unreadable, say which file rather than let
+            // `security` report a generic failure.
+            throw Failure.notWritable("certificat illisible : \(path)")
+        }
+        _ = try run("/usr/bin/security", [
+            "add-trusted-cert", "-r", "trustRoot",
+            "-k", Installation.loginKeychainPath, "-p", "ssl", path,
+        ])
+    }
+
+    /// Removes the trust again, from the same keychain that received it.
+    ///
+    /// Unprivileged for the same reason as ``trustAuthority``, and part of the user
+    /// half of the uninstall rather than the privileged script — a `sudo` command
+    /// aimed at the user's own keychain would look for it in the wrong place.
+    public func untrustAuthority() -> Outcome {
+        let id = "authority"
+        guard !Installation.installedAuthorityNames().isEmpty else {
+            return Outcome(id: id, succeeded: true, message: "absente du trousseau")
+        }
+        guard !isDryRun else {
+            return Outcome(id: id, succeeded: true, message: "supprimerait l'autorité du trousseau")
+        }
+        do {
+            _ = try run("/usr/bin/security", [
+                "delete-certificate", "-c", Installation.authorityCommonNamePrefix,
+                Installation.loginKeychainPath,
+            ])
+            return Outcome(id: id, succeeded: true, message: "autorité retirée du trousseau")
+        } catch {
+            return Outcome(id: id, succeeded: false, message: "\(error)")
+        }
     }
 
     /// The unprivileged half: files inside the user's own account.
@@ -182,13 +293,26 @@ public struct Installer: Sendable {
     /// Undoing something that was never done is how an uninstall script ends up
     /// disabling a setting somebody else made.
     public func uninstallScript() -> String {
-        let applied = Installation.applied(proxyPort: proxyPort, pacPort: pacPort)
-            .filter { $0.scope == .administrator }
-        guard !applied.isEmpty else { return "" }
+        uninstallScript(for: Installation.applied(proxyPort: proxyPort, pacPort: pacPort))
+    }
+
+    /// The same thing, over a list handed in.
+    ///
+    /// Split out so the ordering can be tested without a machine that happens to have
+    /// Tamis installed. The version above reads the real system, so on a clean Mac it
+    /// returns an empty string and any test of its ordering passes by describing
+    /// nothing — which is how an ordering bug survives a green suite.
+    public func uninstallScript(for changes: [SystemChange]) -> String {
+        // Reversed: the last change applied is the first undone. That puts the system
+        // proxy back before the services it points at are dismantled, and removes the
+        // privileged directory only after the resolver living in it has been booted
+        // out.
+        let privileged = changes.filter { $0.scope == .administrator }.reversed()
+        guard !privileged.isEmpty else { return "" }
 
         // No `set -e` here, deliberately: a removal must keep going when one step finds
         // nothing to remove, or a half-uninstalled machine stays half-uninstalled.
-        return applied.map { "# \($0.title)\n\($0.undoCommand)" }.joined(separator: "\n\n")
+        return privileged.map { "# \($0.title)\n\($0.undoCommand)" }.joined(separator: "\n\n")
     }
 
     public func removeUserFiles() throws -> [Outcome] {
@@ -207,6 +331,9 @@ public struct Installer: Sendable {
             }
         }
         outcomes.append(contentsOf: (try? stagingOutcomes()) ?? [])
+        // Neither privileged nor path-based, so neither loop above would reach it: the
+        // authority lives in the user's keychain and comes out the same way.
+        outcomes.append(untrustAuthority())
         return outcomes
     }
 

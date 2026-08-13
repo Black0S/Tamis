@@ -166,20 +166,51 @@ public enum Preflight {
     /// Worth its own check: a stale root that no running Tamis holds the key for is
     /// dead weight in the trust store, and the honest thing is to say so rather than
     /// quietly add a second one next to it.
+    /// Everything a previous installation left behind — not only its certificate.
+    ///
+    /// This used to look at the trust store and nothing else, while
+    /// ``Installation/applied()`` documented itself as "what the preflight reports as
+    /// residue". The two never met. A failed install proved the cost: root-owned
+    /// binaries sat in `/Library/Application Support/Tamis` and this screen said
+    /// nothing opposed the installation.
+    ///
+    /// It reads the plan now, so a change added later is reported here without anybody
+    /// remembering to come back and add it.
     static func checkResidualTamis() -> [Finding] {
-        let residual = installedAuthorities().filter { $0.contains("Tamis Local CA") }
-        guard !residual.isEmpty else { return [] }
+        var findings: [Finding] = []
 
-        return [Finding(
-            id: "ca.residual", severity: .warning,
-            title: residual.count == 1
-                ? "Une autorité Tamis est déjà installée"
-                : "\(residual.count) autorités Tamis sont déjà installées",
-            detail: residual.sorted().joined(separator: ", ")
-                  + ". Elle vient d'une installation précédente. Tamis en créerait une "
-                  + "nouvelle à côté.",
-            remedy: "La désinstallation les retire toutes."
-        )]
+        let residual = installedAuthorities().filter { $0.contains("Tamis Local CA") }
+        if !residual.isEmpty {
+            findings.append(Finding(
+                id: "ca.residual", severity: .warning,
+                title: residual.count == 1
+                    ? "Une autorité Tamis est déjà installée"
+                    : "\(residual.count) autorités Tamis sont déjà installées",
+                detail: residual.sorted().joined(separator: ", ")
+                      + ". Elle vient d'une installation précédente. Tamis en créerait "
+                      + "une nouvelle à côté.",
+                remedy: "La désinstallation les retire toutes."
+            ))
+        }
+
+        // The authority is reported above with its own names, so it is not repeated.
+        let applied = Installation.applied().filter { $0.id != "authority" }
+        guard !applied.isEmpty else { return findings }
+
+        findings.append(Finding(
+            id: "install.residual", severity: .warning,
+            title: applied.count == 1
+                ? "Un élément d'une installation précédente est encore en place"
+                : "\(applied.count) éléments d'une installation précédente sont encore en place",
+            detail: applied.map(\.title).joined(separator: ", ")
+                  + ". Réinstaller par-dessus fonctionne, mais ces éléments n'ont pas "
+                  + "été retirés par la désinstallation précédente — ce qui veut dire "
+                  + "qu'elle a échoué quelque part.",
+            // The commands, not a button: this is a state Tamis got wrong once, and
+            // somebody should be able to fix it without trusting Tamis to do it.
+            remedy: applied.map(\.undoCommand).joined(separator: " ; ")
+        ))
+        return findings
     }
 
     /// Common names of every root the user trusts, read from the keychain.

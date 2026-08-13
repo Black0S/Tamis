@@ -96,9 +96,37 @@ struct AuthorityKeeperTests {
         let keeper = AuthorityKeeper(directory: directory)
         try keeper.prepare(machineName: "Test")
 
-        let mode = try FileManager.default.attributesOfItem(
-            atPath: directory.appending(path: "ca.key").path(percentEncoded: false)
-        )[.posixPermissions] as? NSNumber
-        #expect(mode?.int16Value == 0o600)
+        func mode(_ path: String) throws -> Int16? {
+            (try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions]
+                as? NSNumber)?.int16Value
+        }
+
+        #expect(try mode(directory.appending(path: "ca.key").path(percentEncoded: false)) == 0o600)
+
+        // The two assertions this test was missing, and their absence is why a real
+        // install failed: the certificate is presented to `security` by the user, not
+        // by root, so a 0644 file inside a 0700 directory is just as unreadable as a
+        // 0600 one. Checking the file alone let the directory stay locked.
+        #expect(try mode(directory.appending(path: "ca.der").path(percentEncoded: false)) == 0o644)
+        #expect(try mode(directory.path(percentEncoded: false)) == 0o755)
+    }
+
+    /// A daemon that finds an authority does not rewrite it, so a directory created by
+    /// an earlier version keeps its permissions for ever. Preparing again must repair
+    /// them rather than assume the first run got them right.
+    @Test("Preparing over a locked-down directory reopens it")
+    func repairsExistingPermissions() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "tamisd-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try AuthorityKeeper(directory: directory).prepare(machineName: "Test")
+
+        let mode = (try FileManager.default.attributesOfItem(
+            atPath: directory.path(percentEncoded: false)
+        )[.posixPermissions] as? NSNumber)?.int16Value
+        #expect(mode == 0o755, "un dossier existant garde ses permissions d'origine")
     }
 }

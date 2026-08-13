@@ -89,3 +89,39 @@ struct LaunchdJobTests {
         #expect(String(decoding: try job.plistData(), as: UTF8.self).hasPrefix("<?xml"))
     }
 }
+
+/// Found the hard way: the resolver job passed `--launchd-socket`, which `tamis-dnsd`
+/// rejects. It exited 2, launchd relaunched it eleven times, and because the install had
+/// already pointed the system DNS at 127.0.0.1 the Mac could not resolve anything.
+///
+/// `PlanMatchesBuildTests` checked that the plan named binaries the build produces. It
+/// did not check that it called them with arguments they accept, which is the same class
+/// of mismatch one level down.
+@Suite("Jobs call binaries the way those binaries parse")
+struct JobArgumentsTests {
+
+    /// Read from the parser itself rather than restated here, so the two cannot drift.
+    private func acceptedFlags(ofToolAt path: String) throws -> Set<String> {
+        let source = try String(contentsOfFile: path, encoding: .utf8)
+        var flags: Set<String> = []
+        for match in source.matches(of: /case "(--[a-z-]+)"/) {
+            flags.insert(String(match.1))
+        }
+        return flags
+    }
+
+    @Test("Every flag the resolver job passes is one tamis-dnsd understands")
+    func resolverFlags() throws {
+        let parser = "Packages/TamisDNS/Sources/tamis-dnsd/main.swift"
+        guard FileManager.default.fileExists(atPath: parser) else { return }
+
+        let accepted = try acceptedFlags(ofToolAt: parser)
+        #expect(!accepted.isEmpty, "aucun drapeau lu dans l'analyseur")
+
+        let job = LaunchdJob.resolver(executable: URL(fileURLWithPath: "/bin/true"))
+        for flag in job.arguments where flag.hasPrefix("--") {
+            #expect(accepted.contains(flag),
+                    "le job passe \(flag), que tamis-dnsd refuse — il sortira en erreur")
+        }
+    }
+}
