@@ -8,3 +8,6 @@ DerivedData/
 
 # Bundled application
 build/
+
+# Editor settings, which belong to whoever is editing rather than to the project
+.vscode/
